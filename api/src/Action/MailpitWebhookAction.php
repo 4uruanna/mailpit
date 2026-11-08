@@ -6,43 +6,39 @@ namespace App\Action;
 
 use App\Http\Json;
 use App\Mailpit\InvalidPayloadException;
-use App\Mailpit\MessageSummary;
+use App\Mailpit\Message;
 use App\Middleware\IpFilterMiddleware;
 use App\Persistence\MessageRepository;
-use App\Persistence\RawMessageStore;
 use JsonException;
 use Psr\Http\Message\ResponseFactoryInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 
 /**
- * POST /hook/mailpit : reçoit le webhook « nouveau message » de Mailpit.
+ * POST /hook/mailpit : reçoit un mail (résumé du webhook Mailpit, ou mail complet envoyé par le relais).
  *
- * Réponses : 201 (enregistré), 200 (déjà connu), 403 (jeton invalide),
- * 400/413/415/422 (requête invalide).
+ * Réponses :
+ *   201 {"status":"created", "id":"…", "complete":false, "missing":["2","raw"], "too_large":["3"]}
+ *   200 {"status":"updated"|"duplicate", …}   déjà connu (même ID Mailpit)
+ *   400 / 413 / 415 / 422                     requête invalide
+ *
+ * « missing » liste les pièces annoncées dans « Parts » dont le contenu est attendu
+ * (PUT /hook/mailpit/{ID}/parts/{PartID}). « too_large » liste celles qui dépassent
+ * la limite de taille : elles sont décrites en base, mais leur contenu n'est pas enregistré.
  */
 final readonly class MailpitWebhookAction
 {
     public function __construct(
         private MessageRepository $repository,
-        private RawMessageStore $rawStore,
         private ResponseFactoryInterface $responseFactory,
         private int $maxBodySize,
-        private ?string $token = null,
+        private int $maxPartSize,
+        private int $maxRawSize,
     ) {
     }
 
     public function __invoke(ServerRequestInterface $request): ResponseInterface
     {
-        if ($this->token !== null) {
-            $given = $request->getQueryParams()['token'] ?? '';
-            if (!is_string($given) || !hash_equals($this->token, $given)) {
-                error_log('[webhook] jeton absent ou invalide');
-
-                return $this->error(403, 'Forbidden');
-            }
-        }
-
         $contentType = strtolower(trim(explode(';', $request->getHeaderLine('Content-Type'))[0]));
         if ($contentType !== 'application/json') {
             return $this->error(415, 'Content-Type application/json attendu');
@@ -74,34 +70,33 @@ final readonly class MailpitWebhookAction
         }
 
         try {
-            $message = MessageSummary::fromArray($data);
+            $message = Message::fromArray($data);
         } catch (InvalidPayloadException $e) {
             return $this->error(422, $e->getMessage());
         }
 
-        // Le corps est rangé dans ses propres colonnes (et le .eml en fichier) :
-        // on ne le duplique pas dans la colonne « payload ».
+        // Le corps et les en-têtes sont rangés dans leurs propres colonnes :
+        // on ne les duplique pas dans la colonne « payload ».
         $payload = $raw;
-        if (array_intersect_key($data, ['Text' => 0, 'HTML' => 0, 'Raw' => 0]) !== []) {
-            unset($data['Text'], $data['HTML'], $data['Raw']);
+        if (array_intersect_key($data, ['Text' => 0, 'HTML' => 0, 'Headers' => 0]) !== []) {
+            unset($data['Text'], $data['HTML'], $data['Headers']);
             $payload = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
         }
 
-        $rawFile = $message->raw === null ? null : $this->rawStore->save($message->id, $message->raw);
-
         $label = $request->getHeaderLine('Mailpit-Label');
-        $inserted = $this->repository->save(
+        $result = $this->repository->save(
             $message,
             $label === '' ? null : $label,
             (string) $request->getAttribute(IpFilterMiddleware::ATTRIBUTE, ''),
             $payload,
-            $rawFile,
+            $this->maxPartSize,
+            $this->maxRawSize,
         );
 
         return Json::response(
             $this->responseFactory,
-            $inserted ? 201 : 200,
-            ['status' => $inserted ? 'created' : 'duplicate', 'id' => $message->id],
+            $result['status'] === 'created' ? 201 : 200,
+            ['id' => $message->id] + $result,
         );
     }
 

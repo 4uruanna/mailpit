@@ -11,6 +11,9 @@ use InvalidArgumentException;
  */
 final readonly class Settings
 {
+    /** Longueur minimale du jeton partagé avec le relais (openssl rand -hex 32 = 64 caractères). */
+    public const int MIN_TOKEN_LENGTH = 32;
+
     /**
      * @param list<string> $allowedIps
      * @param list<string> $trustedProxies
@@ -22,9 +25,11 @@ final readonly class Settings
         public ?string $logFile,
         public array $db,
         public array $allowedIps,
-        public ?string $token,
+        public string $token,
         public int $maxBodySize,
-        public string $rawDir,
+        public int $maxPartSize,
+        public int $maxRawSize,
+        public string $storageDir,
         public array $trustedProxies,
         public string $proxyHeader,
     ) {
@@ -50,14 +55,17 @@ final readonly class Settings
             $basePath = '/' . $basePath;
         }
 
+        // Le jeton est obligatoire : il est configuré des deux côtés (API et relais).
         $token = $webhook['token'] ?? null;
-        if ($token !== null && $token !== '') {
-            if (!is_string($token) || strlen($token) < 16) {
-                throw new InvalidArgumentException('« webhook.token » doit faire au moins 16 caractères');
-            }
-        } else {
-            $token = null;
+        if (!is_string($token) || strlen(trim($token)) < self::MIN_TOKEN_LENGTH) {
+            throw new InvalidArgumentException(sprintf(
+                '« webhook.token » est obligatoire et doit faire au moins %d caractères (openssl rand -hex 32)',
+                self::MIN_TOKEN_LENGTH,
+            ));
         }
+
+        // « raw_dir » : ancien nom de « storage_dir », encore accepté.
+        $storageDir = $webhook['storage_dir'] ?? $webhook['raw_dir'] ?? dirname(__DIR__) . '/var/messages';
 
         return new self(
             debug: (bool) ($config['debug'] ?? false),
@@ -71,12 +79,24 @@ final readonly class Settings
                 'password' => (string) ($db['password'] ?? ''),
             ],
             allowedIps: self::stringList($webhook['allowed_ips'] ?? [], 'webhook.allowed_ips'),
-            token: $token,
-            maxBodySize: max(1, (int) ($webhook['max_body_size'] ?? 16 * 1024 * 1024)),
-            rawDir: rtrim((string) ($webhook['raw_dir'] ?? dirname(__DIR__) . '/var/messages'), '/'),
+            token: trim($token),
+            maxBodySize: self::size($webhook, 'max_body_size', 16 * 1024 * 1024),
+            maxPartSize: self::size($webhook, 'max_attachment_size', 10 * 1024 * 1024),
+            maxRawSize: self::size($webhook, 'max_raw_size', 25 * 1024 * 1024),
+            storageDir: rtrim((string) $storageDir, '/'),
             trustedProxies: self::stringList($proxy['trusted_proxies'] ?? [], 'proxy.trusted_proxies'),
             proxyHeader: (string) ($proxy['header'] ?? 'X-Forwarded-For'),
         );
+    }
+
+    private static function size(array $section, string $key, int $default): int
+    {
+        $value = $section[$key] ?? $default;
+        if (!is_int($value) || $value < 1) {
+            throw new InvalidArgumentException(sprintf('« webhook.%s » doit être un nombre d\'octets positif', $key));
+        }
+
+        return $value;
     }
 
     /** @return list<string> */

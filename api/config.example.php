@@ -39,19 +39,28 @@ return [
             // '2001:db8::10',
         ],
 
-        // Jeton secret facultatif (recommandé), à mettre dans l'URL du webhook :
-        //   MP_WEBHOOK_URL=https://api.amnesic.dev/hook/mailpit?token=LE_JETON
-        // Mailpit ne signe pas ses requêtes : ce jeton s'ajoute au filtre IP.
-        // Générez-le avec : openssl rand -hex 24   (null = désactivé)
-        'token' => null,
+        // Jeton secret OBLIGATOIRE (32 caractères minimum), identique à RELAY_API_TOKEN
+        // dans /etc/mailpit/relay.env. Le relais l'envoie dans l'en-tête
+        // « Authorization: Bearer … ». Il s'ajoute au filtre IP.
+        // Générez-le avec : openssl rand -hex 32
+        'token' => 'REMPLACEZ_PAR_LE_RESULTAT_DE_openssl_rand_-hex_32',
 
-        // Taille maximale acceptée pour le corps de la requête (octets).
-        // Avec le relais (corps des mails, mail brut en base64), prévoyez large :
-        // un .eml de 5 Mo (RELAY_MAX_RAW_SIZE) pèse environ 7 Mo une fois encodé.
+        // Taille maximale du JSON d'un mail (en-têtes, texte, HTML), en octets.
+        // Les pièces jointes n'en font pas partie : elles sont envoyées à part.
         'max_body_size' => 16 * 1024 * 1024,
 
-        // Dossier où le relais dépose les mails bruts (.eml), si RELAY_INCLUDE_RAW=true.
-        'raw_dir' => __DIR__ . '/var/messages',
+        // Taille maximale d'UNE pièce jointe (ou image intégrée), en octets.
+        // Une pièce plus grosse est décrite en base (nom, type, taille) mais son
+        // contenu n'est pas enregistré (état « too_large »).
+        // ⚠️ L'hébergement doit accepter des requêtes de cette taille (voir le README).
+        'max_attachment_size' => 10 * 1024 * 1024,
+
+        // Taille maximale du mail brut (.eml), si le relais l'envoie (RELAY_INCLUDE_RAW=true).
+        'max_raw_size' => 25 * 1024 * 1024,
+
+        // Dossier des pièces jointes et des mails bruts : un sous-dossier par mail.
+        // Il doit être accessible en écriture par PHP, et jamais servi par le web.
+        'storage_dir' => __DIR__ . '/var/messages',
     ],
 
     // À laisser vide sur un hébergement OVH classique : l'IP du client est dans REMOTE_ADDR.

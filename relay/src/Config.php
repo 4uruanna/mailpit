@@ -12,27 +12,38 @@ use InvalidArgumentException;
  */
 final readonly class Config
 {
+    /** Longueur minimale du jeton (même règle que l'API). */
+    public const int MIN_TOKEN_LENGTH = 32;
+
     public function __construct(
         /** URL de Mailpit vue depuis le conteneur du relais. */
         public string $mailpitUrl,
         /** Identifiants de MP_UI_AUTH (« utilisateur:motdepasse »), null si pas d'authentification. */
         public ?string $mailpitAuth,
-        /** URL de l'API qui reçoit les mails complets (avec ?token=… si besoin). */
+        /** URL du hook de l'API (sans jeton : il est envoyé dans l'en-tête Authorization). */
         public string $targetUrl,
-        /** Joindre aussi le mail brut (.eml, pièces jointes comprises) encodé en base64. */
+        /** Jeton partagé avec l'API (webhook.token dans son config.php). */
+        public string $apiToken,
+        /** Envoyer aussi le mail brut (.eml). */
         public bool $includeRaw,
-        /** Au-delà de cette taille (octets), le mail brut n'est pas joint. */
-        public int $maxRawSize,
-        /** Nombre d'essais avant d'abandonner un mail (rangé dans failed/). */
-        public int $maxAttempts,
         /** Délai maximal d'une requête HTTP (secondes). */
         public int $timeout,
         /** Remettre en « non lu » dans Mailpit les messages que le relais a lus. */
         public bool $keepUnread,
-        /** Dossier des files d'attente (volume Podman). */
-        public string $dataDir,
+        /** Intervalle entre deux recherches de mails à relayer, en l'absence de webhook (secondes). */
+        public int $pollInterval,
+        /** Nombre de mails lus dans Mailpit à chaque recherche. */
+        public int $batchSize,
+        /** Tag posé dans Mailpit quand l'API a tout enregistré. */
+        public string $tagDone,
+        /** Tag posé dans Mailpit quand l'API refuse définitivement un mail. */
+        public string $tagFailed,
+        /** Filtre de recherche Mailpit supplémentaire (ex. « after:2026-11-01 »), ou ''. */
+        public string $query,
         /** Adresse d'écoute du récepteur de webhook. */
         public string $listen,
+        /** Nom de cette instance, envoyé à l'API dans l'en-tête Mailpit-Label (colonne mailpit_label), ou null. */
+        public ?string $label = null,
     ) {
     }
 
@@ -40,7 +51,18 @@ final readonly class Config
     {
         $target = self::env('RELAY_TARGET_URL');
         if ($target === null || !preg_match('#^https?://#i', $target) || filter_var($target, FILTER_VALIDATE_URL) === false) {
-            throw new InvalidArgumentException('RELAY_TARGET_URL manquante ou invalide (ex. https://api.amnesic.dev/hook/mailpit?token=…)');
+            throw new InvalidArgumentException('RELAY_TARGET_URL manquante ou invalide (ex. https://api.mondomaine.fr/hook/mailpit)');
+        }
+        if (parse_url($target, PHP_URL_QUERY) !== null || parse_url($target, PHP_URL_FRAGMENT) !== null) {
+            throw new InvalidArgumentException('RELAY_TARGET_URL ne doit pas contenir de « ?… » : le jeton va dans RELAY_API_TOKEN');
+        }
+
+        $token = self::env('RELAY_API_TOKEN');
+        if ($token === null || strlen($token) < self::MIN_TOKEN_LENGTH || preg_match('/\s/', $token)) {
+            throw new InvalidArgumentException(sprintf(
+                'RELAY_API_TOKEN manquant ou trop court (%d caractères minimum, sans espace) : même valeur que webhook.token de l\'API',
+                self::MIN_TOKEN_LENGTH,
+            ));
         }
 
         $mailpit = rtrim(self::env('RELAY_MAILPIT_URL') ?? 'http://mailpit:8025', '/');
@@ -53,32 +75,48 @@ final readonly class Config
             throw new InvalidArgumentException('RELAY_MAILPIT_AUTH doit être au format utilisateur:motdepasse');
         }
 
+        $tagDone = self::tag('RELAY_TAG_DONE', 'relayed');
+        $tagFailed = self::tag('RELAY_TAG_FAILED', 'relay-failed');
+        if (strcasecmp($tagDone, $tagFailed) === 0) {
+            throw new InvalidArgumentException('RELAY_TAG_DONE et RELAY_TAG_FAILED doivent être différents');
+        }
+
         return new self(
             mailpitUrl: $mailpit,
             mailpitAuth: $auth,
-            targetUrl: $target,
+            targetUrl: rtrim($target, '/'),
+            apiToken: $token,
             includeRaw: self::bool('RELAY_INCLUDE_RAW', false),
-            maxRawSize: self::int('RELAY_MAX_RAW_SIZE', 5 * 1024 * 1024),
-            maxAttempts: self::int('RELAY_MAX_ATTEMPTS', 48),
-            timeout: self::int('RELAY_TIMEOUT', 30),
+            timeout: self::int('RELAY_TIMEOUT', 60),
             keepUnread: self::bool('RELAY_KEEP_UNREAD', true),
-            dataDir: rtrim(self::env('RELAY_DATA_DIR') ?? '/data', '/'),
+            pollInterval: self::int('RELAY_POLL_INTERVAL', 30),
+            batchSize: min(500, self::int('RELAY_BATCH_SIZE', 50)),
+            tagDone: $tagDone,
+            tagFailed: $tagFailed,
+            query: self::env('RELAY_QUERY') ?? '',
             listen: self::env('RELAY_LISTEN') ?? '0.0.0.0:8080',
+            label: self::env('RELAY_LABEL'),
         );
+    }
+
+    /** Recherche Mailpit des mails pas encore relayés (ni refusés). */
+    public function pendingQuery(): string
+    {
+        return trim(sprintf('!tag:%s !tag:%s %s', $this->tagDone, $this->tagFailed, $this->query));
     }
 
     /** Valeur sans les identifiants, pour les logs. */
     public function describe(): string
     {
-        $target = preg_replace('/([?&]token=)[^&]*/i', '$1***', $this->targetUrl);
-
         return sprintf(
-            'Mailpit=%s (auth %s), API=%s, mail brut=%s, essais max=%d',
+            'Mailpit=%s (auth %s), API=%s (jeton %s…), mail brut=%s, recherche « %s » toutes les %d s',
             $this->mailpitUrl,
             $this->mailpitAuth === null ? 'non' : 'oui',
-            $target,
-            $this->includeRaw ? sprintf('oui (≤ %d octets)', $this->maxRawSize) : 'non',
-            $this->maxAttempts,
+            $this->targetUrl,
+            substr($this->apiToken, 0, 4),
+            $this->includeRaw ? 'oui' : 'non',
+            $this->pendingQuery(),
+            $this->pollInterval,
         );
     }
 
@@ -87,6 +125,16 @@ final readonly class Config
         $value = getenv($name);
 
         return $value === false || trim($value) === '' ? null : trim($value);
+    }
+
+    private static function tag(string $name, string $default): string
+    {
+        $value = self::env($name) ?? $default;
+        if (!preg_match('/^[A-Za-z0-9_.-]{1,50}$/', $value)) {
+            throw new InvalidArgumentException(sprintf('%s : lettres, chiffres, « - », « _ » et « . » uniquement', $name));
+        }
+
+        return $value;
     }
 
     private static function bool(string $name, bool $default): bool

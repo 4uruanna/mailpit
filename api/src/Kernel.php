@@ -5,14 +5,17 @@ declare(strict_types=1);
 namespace App;
 
 use App\Action\MailpitWebhookAction;
+use App\Action\UploadPartAction;
 use App\Http\ClientIpResolver;
 use App\Http\ErrorHandler;
 use App\Http\IpMatcher;
 use App\Middleware\IpFilterMiddleware;
+use App\Middleware\TokenAuthMiddleware;
 use App\Persistence\Database;
+use App\Persistence\FileStore;
 use App\Persistence\MessageRepository;
-use App\Persistence\RawMessageStore;
 use Slim\App;
+use Slim\Routing\RouteCollectorProxy;
 use Slim\Factory\AppFactory;
 
 /**
@@ -36,13 +39,26 @@ final class Kernel
 
         $repository = new MessageRepository(new Database($settings->db));
 
-        $app->post('/hook/mailpit', new MailpitWebhookAction(
+        $hook = new MailpitWebhookAction(
             $repository,
-            new RawMessageStore($settings->rawDir),
             $responseFactory,
             $settings->maxBodySize,
-            $settings->token,
-        ));
+            $settings->maxPartSize,
+            $settings->maxRawSize,
+        );
+        $upload = new UploadPartAction(
+            $repository,
+            new FileStore($settings->storageDir),
+            $responseFactory,
+            $settings->maxPartSize,
+            $settings->maxRawSize,
+        );
+
+        // Toutes les routes du webhook exigent le jeton (vérifié avant la lecture du corps).
+        $app->group('/hook/mailpit', function (RouteCollectorProxy $group) use ($hook, $upload): void {
+            $group->post('', $hook);
+            $group->put('/{id}/parts/{partId}', $upload);
+        })->add(new TokenAuthMiddleware($settings->token, $responseFactory));
 
         // Filtre IP global : exécuté avant le routage, toute requête d'une IP
         // non autorisée reçoit un 403 (même sur une URL inexistante).

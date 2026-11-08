@@ -8,13 +8,58 @@ Principe : Certbot obtient le certificat et le renouvelle tout seul. À chaque o
 
 > Prérequis : l'enregistrement A `mail.mondomaine.fr` ([Partie 2, étape 2](02-ovh-dns-zone.md#étape-2--ajouter-lenregistrement-a)) doit **déjà répondre** : `dig +short A mail.mondomaine.fr` affiche l'IP du serveur.
 
-## Étape 1 — Installer Certbot
+## Étape 1 — Installer Certbot et le plugin OVH
+
+Debian 13 ne fournit **pas** le plugin OVH (`python3-certbot-dns-ovh` n'existe pas dans ses dépôts), et un plugin installé par pip est invisible pour le Certbot de Debian. On installe donc Certbot **et** le plugin depuis PyPI, dans un environnement Python dédié. C'est la méthode d'installation officielle de Certbot :
 
 ```bash
-sudo apt install -y certbot
+sudo apt remove -y certbot          # au cas où le paquet Debian serait déjà installé
+sudo apt install -y python3-venv
+sudo python3 -m venv /opt/certbot
+sudo /opt/certbot/bin/pip install --upgrade pip
+sudo /opt/certbot/bin/pip install certbot certbot-dns-ovh
+sudo ln -s /opt/certbot/bin/certbot /usr/local/bin/certbot
+sudo certbot plugins                # doit lister dns-ovh
 ```
 
-Le paquet Debian installe aussi un timer systemd qui tente le renouvellement deux fois par jour. Vous n'avez rien à programmer.
+Pour le renouvellement automatique, créez un timer systemd :
+
+```bash
+sudo nano /etc/systemd/system/certbot-renew.service
+```
+
+```ini
+[Unit]
+Description=Renouvellement des certificats Let's Encrypt
+
+[Service]
+Type=oneshot
+ExecStart=/opt/certbot/bin/certbot renew -q
+```
+
+```bash
+sudo nano /etc/systemd/system/certbot-renew.timer
+```
+
+```ini
+[Unit]
+Description=Renouvellement Let's Encrypt deux fois par jour
+
+[Timer]
+OnCalendar=*-*-* 00,12:00:00
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now certbot-renew.timer
+```
+
+> ℹ️ Cette installation n'est **pas** mise à jour par `apt upgrade`. Voir la [Partie 5 — Maintenance](05-maintenance.md#certbot).
 
 ## Étape 2 — Créer le script de déploiement
 
@@ -46,11 +91,7 @@ sudo chmod 755 /usr/local/bin/mailpit-cert-deploy.sh
 
 Let's Encrypt doit vérifier que vous contrôlez le domaine. Ici, Certbot crée lui-même un enregistrement TXT temporaire (`_acme-challenge.mail.mondomaine.fr`) dans votre zone OVH, puis le supprime. **Aucun port supplémentaire n'est ouvert** (ni 80, ni 443) : c'est idéal pour un serveur derrière une box.
 
-1. Installez le plugin OVH de Certbot :
-   ```bash
-   sudo apt install -y python3-certbot-dns-ovh
-   ```
-2. Créez des identifiants d'API sur **https://eu.api.ovh.com/createToken/** :
+1. Créez des identifiants d'API sur **https://eu.api.ovh.com/createToken/** :
    - *Application name* / *description* : par ex. `certbot-mailpit` ;
    - *Validity* : **Unlimited**, sinon les renouvellements échoueront à l'expiration du jeton ;
    - *Rights*, en limitant l'écriture à votre seule zone :
@@ -63,7 +104,7 @@ Let's Encrypt doit vérifier que vous contrôlez le domaine. Ici, Certbot crée 
      | DELETE | `/domain/zone/mondomaine.fr/*` |
 
    Notez l'*Application Key*, l'*Application Secret* et la *Consumer Key* : ils ne sont affichés qu'une fois.
-3. Enregistrez-les sur le serveur :
+2. Enregistrez-les sur le serveur :
    ```bash
    sudo install -d -m 700 /root/.secrets
    sudo nano /root/.secrets/ovh.ini
@@ -77,7 +118,7 @@ Let's Encrypt doit vérifier que vous contrôlez le domaine. Ici, Certbot crée 
    ```bash
    sudo chmod 600 /root/.secrets/ovh.ini
    ```
-4. Obtenez le certificat :
+3. Obtenez le certificat :
    ```bash
    sudo certbot certonly --dns-ovh \
      --dns-ovh-credentials /root/.secrets/ovh.ini \
@@ -138,7 +179,7 @@ Le renouvellement automatique (simulation, ne change rien) :
 
 ```bash
 sudo certbot renew --dry-run
-systemctl list-timers | grep certbot
+systemctl list-timers | grep certbot     # certbot-renew.timer
 ```
 
 ---
@@ -172,4 +213,4 @@ Si vous avez suivi l'[annexe Debian 12](01-podman.md#annexe--debian-12) :
 
 ---
 
-[←](03-test.md) · [Sommaire](../mailpit.md)
+[←](03-test.md) · [Sommaire](../mailpit.md) · [→](05-maintenance.md)

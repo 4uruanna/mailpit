@@ -21,6 +21,7 @@ Vous ── tunnel SSH ──► 127.0.0.1:8025  ◄─────────�
 2. [Partie 2 — Configurer la zone DNS chez OVH](./mailpit/02-ovh-dns-zone.md) : enregistrements A et MX
 3. [Partie 3 — Test de bout en bout](./mailpit/03-test.md) : envoi d'un vrai mail et dépannage
 4. [Partie 4 — Activer le TLS (STARTTLS) avec Certbot](./mailpit/04-tls.md) : certificat Let's Encrypt et renouvellement automatique
+5. [Partie 5 — Maintenance](./mailpit/05-maintenance.md) : mises à jour, surveillance du certificat, sauvegardes, vérifications régulières
 
 Suivez les parties **dans l'ordre** : la Partie 4 a besoin de l'enregistrement DNS créé en Partie 2.
 
@@ -37,7 +38,7 @@ Suivez les parties **dans l'ordre** : la Partie 4 a besoin de l'enregistrement D
 | `mail.mondomaine.fr` | le nom de votre serveur (pour le MX) |
 | `IP_DU_SERVEUR` | l'adresse IPv4 publique du serveur |
 | `admin:MotDePasseSolide` | vos identifiants pour l'interface web |
-| `vous@exemple.fr` | votre vraie adresse (avertissements d'expiration Let's Encrypt) |
+| `vous@exemple.fr` | votre vraie adresse (compte Let's Encrypt : avis importants sur le service) |
 
 > 💡 Le sous-domaine qui reçoit les mails et le nom du serveur **peuvent être le même**. Exemple : recevoir sur `*@mail.mondomaine.fr`, avec un MX `mail` qui pointe vers `mail.mondomaine.fr.` lui-même. Remplacez alors `test.mondomaine.fr` **et** `mail.mondomaine.fr` par ce seul nom dans tout le tuto.
 >

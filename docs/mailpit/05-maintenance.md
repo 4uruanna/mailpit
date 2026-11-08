@@ -186,6 +186,8 @@ sudo nano /etc/mailpit/mailpit.env       # modifier MP_UI_AUTH
 sudo systemctl restart mailpit
 ```
 
+Si vous utilisez le relais de la [Partie 7](07-relay.md), reportez le nouveau mot de passe dans `RELAY_MAILPIT_AUTH` (`/etc/mailpit/relay.env`), puis lancez `sudo systemctl restart mailpit-relay`.
+
 ## Serveur à la maison
 
 Si le serveur est derrière une box ([Partie 1, étape 6](01-podman.md#serveur-à-la-maison-derrière-une-box)) :

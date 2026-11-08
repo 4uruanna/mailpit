@@ -1,0 +1,24 @@
+# Image du relais Mailpit → API.
+#   sudo podman build --pull -t localhost/mailpit-relay:latest .
+FROM docker.io/library/php:8.5-cli-alpine
+
+# pcntl : permet au relais de s'arrêter proprement (SIGTERM envoyé par podman stop).
+RUN docker-php-ext-install pcntl >/dev/null \
+ && cp "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini" \
+ && install -d -o www-data -g www-data -m 700 /data
+
+COPY bin/ /app/bin/
+COPY public/ /app/public/
+COPY src/ /app/src/
+
+# Le récepteur peut traiter 2 requêtes en même temps.
+ENV PHP_CLI_SERVER_WORKERS=2
+
+USER www-data
+VOLUME ["/data"]
+EXPOSE 8080
+
+# Signal envoyé par « podman stop » (intercepté par bin/relay.php).
+STOPSIGNAL SIGTERM
+
+ENTRYPOINT ["php", "/app/bin/relay.php"]

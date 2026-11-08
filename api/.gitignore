@@ -6,3 +6,5 @@
 
 /var/log/*
 !/var/log/.gitkeep
+/var/messages/*
+!/var/messages/.gitkeep

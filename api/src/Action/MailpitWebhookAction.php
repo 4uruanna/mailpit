@@ -9,6 +9,7 @@ use App\Mailpit\InvalidPayloadException;
 use App\Mailpit\MessageSummary;
 use App\Middleware\IpFilterMiddleware;
 use App\Persistence\MessageRepository;
+use App\Persistence\RawMessageStore;
 use JsonException;
 use Psr\Http\Message\ResponseFactoryInterface;
 use Psr\Http\Message\ResponseInterface;
@@ -24,6 +25,7 @@ final readonly class MailpitWebhookAction
 {
     public function __construct(
         private MessageRepository $repository,
+        private RawMessageStore $rawStore,
         private ResponseFactoryInterface $responseFactory,
         private int $maxBodySize,
         private ?string $token = null,
@@ -77,12 +79,23 @@ final readonly class MailpitWebhookAction
             return $this->error(422, $e->getMessage());
         }
 
+        // Le corps est rangé dans ses propres colonnes (et le .eml en fichier) :
+        // on ne le duplique pas dans la colonne « payload ».
+        $payload = $raw;
+        if (array_intersect_key($data, ['Text' => 0, 'HTML' => 0, 'Raw' => 0]) !== []) {
+            unset($data['Text'], $data['HTML'], $data['Raw']);
+            $payload = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+        }
+
+        $rawFile = $message->raw === null ? null : $this->rawStore->save($message->id, $message->raw);
+
         $label = $request->getHeaderLine('Mailpit-Label');
         $inserted = $this->repository->save(
             $message,
             $label === '' ? null : $label,
             (string) $request->getAttribute(IpFilterMiddleware::ATTRIBUTE, ''),
-            $raw,
+            $payload,
+            $rawFile,
         );
 
         return Json::response(

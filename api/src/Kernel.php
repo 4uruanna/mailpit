@@ -11,6 +11,7 @@ use App\Http\IpMatcher;
 use App\Middleware\IpFilterMiddleware;
 use App\Persistence\Database;
 use App\Persistence\MessageRepository;
+use App\Persistence\RawMessageStore;
 use Slim\App;
 use Slim\Factory\AppFactory;
 
@@ -35,7 +36,13 @@ final class Kernel
 
         $repository = new MessageRepository(new Database($settings->db));
 
-        $app->post('/hook/mailpit', new MailpitWebhookAction($repository, $responseFactory, $settings->maxBodySize, $settings->token));
+        $app->post('/hook/mailpit', new MailpitWebhookAction(
+            $repository,
+            new RawMessageStore($settings->rawDir),
+            $responseFactory,
+            $settings->maxBodySize,
+            $settings->token,
+        ));
 
         // Filtre IP global : exécuté avant le routage, toute requête d'une IP
         // non autorisée reçoit un 403 (même sur une URL inexistante).

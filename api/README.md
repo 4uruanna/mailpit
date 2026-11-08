@@ -8,7 +8,8 @@ Mailpit (serveur Debian) ── POST JSON ──► https://api.amnesic.dev/hook
                                             └─ refusé (403) si l'IP n'est pas dans webhook.allowed_ips
 ```
 
-> ℹ️ Mailpit n'envoie que le **résumé** du message : expéditeur, destinataires, sujet, date, taille, nombre de pièces jointes, tags et les 250 premiers caractères du texte (`Snippet`). Le corps complet et les pièces jointes restent dans Mailpit.
+> ℹ️ Mailpit n'envoie que le **résumé** du message : expéditeur, destinataires, sujet, date, taille, nombre de pièces jointes, tags et les 250 premiers caractères du texte (`Snippet`).
+> Pour recevoir aussi le **corps** (texte et HTML), et si besoin le mail brut `.eml` avec ses pièces jointes, faites passer le webhook par le [relais](../relay/README.md), installé sur le serveur Mailpit ([Partie 7 du tutoriel](../docs/mailpit/07-relay.md)). L'API accepte les deux : le webhook direct de Mailpit et le relais.
 
 ## Arborescence
 
@@ -21,9 +22,12 @@ api/
 ├── public/
 │   ├── .htaccess        # contrôleur frontal Slim
 │   └── index.php
-├── sql/schema.sql       # table MySQL
+├── sql/
+│   ├── schema.sql              # table MySQL (nouvelle installation)
+│   └── upgrade-001-corps.sql   # ajoute les colonnes du corps à une table existante
 ├── src/                 # code de l'API
 ├── var/log/             # logs (doit être accessible en écriture)
+├── var/messages/        # mails bruts .eml envoyés par le relais (RELAY_INCLUDE_RAW=true)
 └── vendor/              # généré par composer install, à envoyer en FTP
 ```
 
@@ -34,6 +38,16 @@ api/
 | `POST` | `/hook/mailpit` | `201 {"status":"created","id":"…"}` : message enregistré<br>`200 {"status":"duplicate","id":"…"}` : déjà reçu (même ID Mailpit)<br>`400` JSON invalide · `413` trop volumineux · `415` pas du JSON · `422` champ invalide<br>`403` IP non autorisée · `500` erreur serveur (base injoignable…) |
 
 Toute autre URL renvoie `404` (ou `403` si l'IP n'est pas autorisée : le filtre IP passe avant tout le reste).
+
+Champs facultatifs ajoutés par le relais au JSON de Mailpit :
+
+| Champ | Enregistré dans |
+|---|---|
+| `Text` | colonne `text_body` |
+| `HTML` | colonne `html_body` |
+| `Raw` (mail `.eml` en base64) | fichier `var/messages/<ID>.eml` (dossier `webhook.raw_dir`), dont le nom va dans la colonne `raw_file` |
+
+La colonne `payload` garde le JSON reçu **sans** ces trois champs, pour ne pas stocker le corps deux fois.
 
 ---
 
@@ -74,6 +88,8 @@ curl -6 -s https://ifconfig.me; echo
 
 Espace client OVH → **Bases de données** → **…** → **Aller sur phpMyAdmin**, puis onglet **Importer** → fichier `sql/schema.sql`.
 
+> **Table déjà créée avec une version précédente ?** Importez une seule fois `sql/upgrade-001-corps.sql`. Il ajoute les colonnes `text_body`, `html_body` et `raw_file`, nécessaires au relais.
+
 ### 3. Envoyer en FTP
 
 Créez par exemple un dossier `api` à la racine FTP de l'hébergement (à côté de `www/`), puis envoyez-y **tout le contenu** de `api/`, **y compris** `vendor/`, `config.php`, `.htaccess`, `public/.htaccess`, `var/.htaccess` et `.ovhconfig`.
@@ -82,7 +98,7 @@ Créez par exemple un dossier `api` à la racine FTP de l'hébergement (à côt�
 
 Inutile d'envoyer `README.md`, `sql/` et `config.example.php` (ils sont de toute façon bloqués par le `.htaccess`).
 
-Le dossier `var/log/` doit être accessible en écriture par PHP (droits `755` ou `705`, ce qui est le cas par défaut chez OVH).
+Les dossiers `var/log/` et `var/messages/` doivent être accessibles en écriture par PHP (droits `755` ou `705`, ce qui est le cas par défaut chez OVH).
 
 ### 4. Brancher le domaine `api.amnesic.dev`
 
@@ -96,7 +112,9 @@ Espace client OVH → **Hébergements** → onglet **Multisite** → **Ajouter u
 
 ### 5. Configurer Mailpit
 
-Le détail du webhook côté Mailpit est dans la [Partie 6 du tuto](../docs/mailpit/06-webhook.md). En résumé, sur le serveur Debian, ajoutez à `/etc/mailpit/mailpit.env` :
+**Avec le relais** (corps des mails) : suivez la [Partie 7 du tuto](../docs/mailpit/07-relay.md). L'URL ci-dessous va alors dans `RELAY_TARGET_URL`, et Mailpit appelle le relais.
+
+**Sans relais** (résumé seulement) : le détail est dans la [Partie 6 du tuto](../docs/mailpit/06-webhook.md). En résumé, sur le serveur Debian, ajoutez à `/etc/mailpit/mailpit.env` :
 
 ```ini
 # Webhook appelé à chaque nouveau mail.
@@ -157,6 +175,8 @@ Le message doit apparaître dans la table `mailpit_messages`.
 | `500` avec `Slim Application Error` | Souvent la base : identifiants faux ou table absente. Détail dans `var/log/api.log` |
 | `404` sur `/hook/mailpit` | `.htaccess` non envoyés (fichiers cachés), ou mauvais dossier racine du multisite. Si l'API est dans un sous-dossier de l'URL, renseignez `base_path` |
 | Certains mails manquent en base | `MP_WEBHOOK_LIMIT` n'est pas à `0` (voir l'étape 5) |
+| `413` pour les gros mails envoyés par le relais | Augmentez `webhook.max_body_size` (16 Mo par défaut), ou baissez `RELAY_MAX_RAW_SIZE` côté relais |
+| `text_body` toujours vide | Le webhook ne passe pas par le relais (`MP_WEBHOOK_URL` pointe directement sur l'API), ou `sql/upgrade-001-corps.sql` n'a pas été importé (erreur `Unknown column` dans le log) |
 | Page blanche / erreur PHP | Version de PHP trop ancienne : vérifiez `.ovhconfig` (8.4 minimum) |
 
 Le fichier `var/log/api.log` n'est pas vidé automatiquement : supprimez-le de temps en temps par FTP.

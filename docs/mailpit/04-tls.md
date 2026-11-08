@@ -42,44 +42,30 @@ Rendez-le exécutable :
 sudo chmod 755 /usr/local/bin/mailpit-cert-deploy.sh
 ```
 
-## Étape 3 — Obtenir le certificat
+## Étape 3 — Obtenir le certificat (validation DNS via l'API OVH)
 
-Choisissez **une** des deux méthodes.
+Let's Encrypt doit vérifier que vous contrôlez le domaine. Ici, Certbot crée lui-même un enregistrement TXT temporaire (`_acme-challenge.mail.mondomaine.fr`) dans votre zone OVH, puis le supprime. **Aucun port supplémentaire n'est ouvert** (ni 80, ni 443) : c'est idéal pour un serveur derrière une box.
 
-### Méthode A — Validation HTTP (la plus simple)
-
-Let's Encrypt vérifie que vous contrôlez le domaine en se connectant au **port 80** du serveur. Ce port doit donc être **libre** (pas de nginx ou d'Apache dessus) et **ouvert** :
-
-```bash
-sudo ss -ltnp | grep ':80 '     # aucune ligne = port libre
-sudo ufw allow 80/tcp           # si vous utilisez ufw (et pare-feu réseau OVH le cas échéant)
-```
-
-Serveur à la maison : ajoutez aussi sur la box une redirection TCP **80** → IP locale de la machine, port 80. Ici, `ufw allow` suffit, car Certbot écoute directement sur la machine et pas dans un conteneur.
-
-Puis :
-
-```bash
-sudo certbot certonly --standalone \
-  -d mail.mondomaine.fr \
-  -m vous@exemple.fr --agree-tos --no-eff-email \
-  --deploy-hook /usr/local/bin/mailpit-cert-deploy.sh
-```
-
-> Le port 80 doit rester ouvert : Certbot s'en resservira à chaque renouvellement (tous les ~60 jours).
-
-### Méthode B — Validation DNS via l'API OVH (si le port 80 est pris ou fermé)
-
-Certbot crée lui-même un enregistrement temporaire dans votre zone DNS OVH. Aucun port n'a besoin d'être ouvert.
-
-1. Installez le plugin :
+1. Installez le plugin OVH de Certbot :
    ```bash
    sudo apt install -y python3-certbot-dns-ovh
    ```
-2. Créez des identifiants d'API sur **https://eu.api.ovh.com/createToken/**. Donnez les droits **GET, POST, PUT, DELETE** sur `/domain/zone/*` et une validité illimitée. Notez l'*Application Key*, l'*Application Secret* et la *Consumer Key*.
+2. Créez des identifiants d'API sur **https://eu.api.ovh.com/createToken/** :
+   - *Application name* / *description* : par ex. `certbot-mailpit` ;
+   - *Validity* : **Unlimited**, sinon les renouvellements échoueront à l'expiration du jeton ;
+   - *Rights*, en limitant l'écriture à votre seule zone :
+
+     | Méthode | Chemin |
+     |---|---|
+     | GET | `/domain/zone/*` |
+     | POST | `/domain/zone/mondomaine.fr/*` |
+     | PUT | `/domain/zone/mondomaine.fr/*` |
+     | DELETE | `/domain/zone/mondomaine.fr/*` |
+
+   Notez l'*Application Key*, l'*Application Secret* et la *Consumer Key* : ils ne sont affichés qu'une fois.
 3. Enregistrez-les sur le serveur :
    ```bash
-   sudo mkdir -p /root/.secrets
+   sudo install -d -m 700 /root/.secrets
    sudo nano /root/.secrets/ovh.ini
    ```
    ```ini
@@ -100,10 +86,11 @@ Certbot crée lui-même un enregistrement temporaire dans votre zone DNS OVH. Au
      -m vous@exemple.fr --agree-tos --no-eff-email \
      --deploy-hook /usr/local/bin/mailpit-cert-deploy.sh
    ```
+   Certbot enregistre ces options (plugin, fichier d'identifiants, deploy hook) dans `/etc/letsencrypt/renewal/mail.mondomaine.fr.conf` : les renouvellements automatiques les réutilisent.
 
-> ⚠️ Ces identifiants permettent de modifier votre zone DNS : protégez le fichier `ovh.ini` comme un mot de passe.
+> ⚠️ Ces identifiants permettent de modifier votre zone DNS : protégez `ovh.ini` comme un mot de passe, et ne le mettez jamais dans un dépôt Git. En cas de fuite, révoquez le jeton depuis la console API OVH (`https://eu.api.ovh.com/console/`) : `GET /me/api/credential` pour trouver son identifiant, puis `DELETE /me/api/credential/{credentialId}`.
 
-**Dans les deux cas**, vérifiez que le script a bien copié les fichiers :
+Vérifiez que le script a bien copié les fichiers :
 
 ```bash
 sudo ls -l /etc/mailpit/certs/      # fullchain.pem et privkey.pem
@@ -160,8 +147,10 @@ systemctl list-timers | grep certbot
 
 | Symptôme | Cause probable / solution |
 |---|---|
-| Certbot : « Could not bind TCP port 80 » | Un serveur web occupe le port 80 → méthode B (DNS) |
-| Certbot : « Timeout during connect » | Port 80 fermé (ufw, pare-feu OVH) ou enregistrement A pas encore propagé |
+| Certbot : `403` / « This call has not been granted » | Droits du jeton OVH insuffisants (voir le tableau de l'étape 3) ou mauvaise zone dans les chemins. Recréez un jeton |
+| Certbot : « Invalid credentials » / « Invalid signature » | Faute de frappe dans `ovh.ini`, ou mauvais `dns_ovh_endpoint` (`ovh-eu` pour les comptes européens) |
+| Certbot : « Incorrect TXT record » / « No TXT record found » | Le TXT n'était pas encore publié : relancez avec `--dns-ovh-propagation-seconds 120` |
+| `certbot renew` échoue des mois plus tard | Jeton OVH expiré ou révoqué : recréez-le avec une validité illimitée et mettez à jour `ovh.ini` |
 | Mailpit ne redémarre plus après l'étape 4 | `sudo journalctl -u mailpit -n 50`. Vérifiez que `/etc/mailpit/certs/` contient bien les deux fichiers et que la ligne `Volume=` est dans `[Container]` |
 | `Verify return code` différent de 0 | Vous avez mis `cert.pem` au lieu de `fullchain.pem`, ou ce n'est pas le bon certificat |
 | Relancer la copie à la main (après un changement de config, par ex.) | `sudo RENEWED_LINEAGE=/etc/letsencrypt/live/mail.mondomaine.fr /usr/local/bin/mailpit-cert-deploy.sh` |

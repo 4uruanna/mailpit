@@ -17,6 +17,8 @@ Il faut **deux enregistrements** :
 
 ## Étape 2 — Ajouter l'enregistrement A
 
+> ⚠️ **Vérifiez d'abord qu'aucune entrée n'existe déjà pour `mail`.** La zone par défaut d'OVH contient souvent un **CNAME** `mail` → `ssl0.ovh.net.` (webmail OVH). Un nom qui a un CNAME ne peut avoir **aucun** autre enregistrement : OVH refusera le A, ou le MX ne fonctionnera pas. Dans la zone, cherchez `mail` dans le filtre. Si vous n'utilisez pas le webmail OVH, supprimez ce CNAME (**…** → **Supprimer l'entrée**). Sinon, prenez un autre nom (`mx`, `mailpit`…).
+
 1. Cliquez sur **Ajouter une entrée** → choisissez **A**.
 2. **Sous-domaine** : `mail`
 3. **Cible** : `IP_DU_SERVEUR`

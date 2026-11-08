@@ -24,6 +24,7 @@ final readonly class Settings
         public array $allowedIps,
         public ?string $token,
         public int $maxBodySize,
+        public string $rawDir,
         public array $trustedProxies,
         public string $proxyHeader,
     ) {
@@ -71,7 +72,8 @@ final readonly class Settings
             ],
             allowedIps: self::stringList($webhook['allowed_ips'] ?? [], 'webhook.allowed_ips'),
             token: $token,
-            maxBodySize: max(1, (int) ($webhook['max_body_size'] ?? 1024 * 1024)),
+            maxBodySize: max(1, (int) ($webhook['max_body_size'] ?? 16 * 1024 * 1024)),
+            rawDir: rtrim((string) ($webhook['raw_dir'] ?? dirname(__DIR__) . '/var/messages'), '/'),
             trustedProxies: self::stringList($proxy['trusted_proxies'] ?? [], 'proxy.trusted_proxies'),
             proxyHeader: (string) ($proxy['header'] ?? 'X-Forwarded-For'),
         );

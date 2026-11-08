@@ -24,8 +24,9 @@ Vous ── tunnel SSH ──► 127.0.0.1:8025  ◄─────────�
 5. [Partie 5 — Maintenance](./mailpit/05-maintenance.md) : mises à jour, surveillance du certificat, sauvegardes, vérifications régulières
 6. [Partie 6 — Appeler un webhook à la réception d'un mail](./mailpit/06-webhook.md) : prévenir une autre application à chaque nouveau mail (facultatif)
    - [API de réception](../api/README.md) : API PHP/Slim + MySQL sur un hébergement OVH, qui enregistre chaque mail reçu par le webhook
+7. [Partie 7 — Relayer le contenu complet des mails vers une API](./mailpit/07-relay.md) : relais PHP sous Podman qui envoie le texte, le HTML (et le .eml) de chaque mail à l'API (facultatif)
 
-Suivez les parties **dans l'ordre** : la Partie 4 a besoin de l'enregistrement DNS créé en Partie 2. La Partie 6 est facultative et ne dépend que de la Partie 1.
+Suivez les parties **dans l'ordre** : la Partie 4 a besoin de l'enregistrement DNS créé en Partie 2. La Partie 6 est facultative et ne dépend que de la Partie 1. La Partie 7 est facultative et remplace l'URL du webhook de la Partie 6.
 
 ---
 

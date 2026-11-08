@@ -46,7 +46,12 @@ return [
         'token' => null,
 
         // Taille maximale acceptée pour le corps de la requête (octets).
-        'max_body_size' => 1024 * 1024,
+        // Avec le relais (corps des mails, mail brut en base64), prévoyez large :
+        // un .eml de 5 Mo (RELAY_MAX_RAW_SIZE) pèse environ 7 Mo une fois encodé.
+        'max_body_size' => 16 * 1024 * 1024,
+
+        // Dossier où le relais dépose les mails bruts (.eml), si RELAY_INCLUDE_RAW=true.
+        'raw_dir' => __DIR__ . '/var/messages',
     ],
 
     // À laisser vide sur un hébergement OVH classique : l'IP du client est dans REMOTE_ADDR.

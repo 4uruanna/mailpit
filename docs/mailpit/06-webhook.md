@@ -12,7 +12,7 @@ Mail reçu ──► Mailpit ── POST JSON (résumé du mail) ──► votre
 
 La requête contient un **résumé** du mail (expéditeur, destinataires, sujet, extrait…), pas son contenu complet. Si votre service a besoin du corps ou des pièces jointes, il les récupère ensuite via l'API de Mailpit avec l'`ID` reçu.
 
-> 💡 Pour enregistrer chaque mail reçu dans une base MySQL sur un hébergement OVH, une API prête à déployer est fournie dans le dossier [`api/`](../../api/README.md).
+> 💡 Pour enregistrer chaque mail reçu dans une base MySQL sur un hébergement OVH, une API prête à déployer est fournie dans le dossier [`api/`](../../api/README.md). Pour lui envoyer aussi le **contenu complet** des mails, utilisez le relais de la [Partie 7](07-relay.md).
 
 ## Étape 1 — Choisir l'URL du webhook
 
@@ -174,4 +174,4 @@ Si vous avez suivi l'[annexe Debian 12](01-podman.md#annexe--debian-12), le serv
 
 ---
 
-[←](05-maintenance.md) · [Sommaire](../mailpit.md)
+[←](05-maintenance.md) · [Sommaire](../mailpit.md) · [→](07-relay.md)

@@ -20,7 +20,9 @@ use Exception;
  *   "Username": "", "Tags": [], "Size": 1234, "Attachments": 0, "Snippet": "Texte…"
  * }
  *
- * Seul le résumé est transmis : le corps complet et les pièces jointes restent dans Mailpit.
+ * Envoyé directement par Mailpit, il ne contient que ce résumé. Envoyé par le relais
+ * (dossier relay/ du dépôt), il contient en plus :
+ *   "Text": "corps texte", "HTML": "corps HTML", "Raw": "mail brut .eml en base64" (facultatif)
  */
 final readonly class MessageSummary
 {
@@ -47,6 +49,10 @@ final readonly class MessageSummary
         public int $size,
         public int $attachments,
         public string $snippet,
+        public ?string $text = null,
+        public ?string $html = null,
+        /** Mail brut (.eml) décodé, ou null. */
+        public ?string $raw = null,
     ) {
     }
 
@@ -60,7 +66,7 @@ final readonly class MessageSummary
         }
 
         $id = $data['ID'] ?? null;
-        if (!is_string($id) || $id === '' || strlen($id) > 64) {
+        if (!is_string($id) || !preg_match('/^[A-Za-z0-9_-]{1,64}$/', $id)) {
             throw new InvalidPayloadException('champ « ID » manquant ou invalide');
         }
 
@@ -91,7 +97,30 @@ final readonly class MessageSummary
             size: self::uint($data, 'Size'),
             attachments: self::uint($data, 'Attachments'),
             snippet: self::string($data, 'Snippet'),
+            text: self::optionalString($data, 'Text'),
+            html: self::optionalString($data, 'HTML'),
+            raw: self::raw($data),
         );
+    }
+
+    private static function optionalString(array $data, string $key): ?string
+    {
+        return array_key_exists($key, $data) && $data[$key] !== null ? self::string($data, $key) : null;
+    }
+
+    private static function raw(array $data): ?string
+    {
+        $encoded = self::optionalString($data, 'Raw');
+        if ($encoded === null) {
+            return null;
+        }
+
+        $raw = base64_decode($encoded, true);
+        if ($raw === false) {
+            throw new InvalidPayloadException('champ « Raw » : base64 invalide');
+        }
+
+        return $raw;
     }
 
     private static function string(array $data, string $key): string

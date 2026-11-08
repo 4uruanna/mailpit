@@ -1,0 +1,30 @@
+# -----------------------------------------------------------------------------
+# .htaccess racine de l'API
+#
+# Fonctionne dans les deux configurations du multisite OVH :
+#  - dossier racine = api/public (recommandé) : ce fichier n'est pas lu ;
+#  - dossier racine = api/ : tout est redirigé vers public/, et le reste
+#    (config.php, vendor/, src/, sql/, var/…) est inaccessible.
+# -----------------------------------------------------------------------------
+
+# Pas de listing des dossiers.
+Options -Indexes
+
+# Fichiers cachés (.htaccess, .ovhconfig, .git…) et fichiers sensibles.
+<FilesMatch "^\.">
+    Require all denied
+</FilesMatch>
+<FilesMatch "(^config(\.example)?\.php|^composer\.(json|lock)|\.(sql|md|log|ini|env|lock|dist|bak|sw[op])|~)$">
+    Require all denied
+</FilesMatch>
+
+# Dossiers internes : 404, même si mod_rewrite était désactivé.
+RedirectMatch 404 (^|/)(vendor|src|sql|var)(/|$)
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Seul public/ est servi : la requête /hook/mailpit est traitée par public/index.php.
+    RewriteRule ^$ public/ [L]
+    RewriteRule ^(.*)$ public/$1 [L]
+</IfModule>

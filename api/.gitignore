@@ -1,0 +1,8 @@
+# Contient les mots de passe : ne jamais versionner.
+/config.php
+
+# Généré par « composer install ».
+/vendor/
+
+/var/log/*
+!/var/log/.gitkeep

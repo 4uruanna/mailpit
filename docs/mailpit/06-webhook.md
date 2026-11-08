@@ -12,6 +12,8 @@ Mail reçu ──► Mailpit ── POST JSON (résumé du mail) ──► votre
 
 La requête contient un **résumé** du mail (expéditeur, destinataires, sujet, extrait…), pas son contenu complet. Si votre service a besoin du corps ou des pièces jointes, il les récupère ensuite via l'API de Mailpit avec l'`ID` reçu.
 
+> 💡 Pour enregistrer chaque mail reçu dans une base MySQL sur un hébergement OVH, une API prête à déployer est fournie dans le dossier [`api/`](../../api/README.md).
+
 ## Étape 1 — Choisir l'URL du webhook
 
 Votre service doit :

@@ -1,6 +1,6 @@
 # Partie 2 — Configurer la zone DNS chez OVH
 
-> Remplacez les valeurs d'exemple (`mondomaine.fr`, `IP_DU_SERVEUR`…) comme indiqué dans [Avant de commencer](mailpit.md#avant-de-commencer).
+> Remplacez les valeurs d'exemple (`mondomaine.fr`, `IP_DU_SERVEUR`…) comme indiqué dans [Avant de commencer](../mailpit.md#avant-de-commencer).
 
 Il faut **deux enregistrements** :
 
@@ -42,7 +42,7 @@ Il faut **deux enregistrements** :
 
 1. Dans la zone DNS, filtrez sur le type **MX**. Supprimez les entrées existantes (`mx0.mail.ovh.net.`, `mx1.mail.ovh.net.`, etc.) avec le bouton **…** → **Supprimer l'entrée**.
 2. Ajoutez un MX avec le **sous-domaine vide**, priorité `10` et la cible `mail.mondomaine.fr.`
-3. Dans `/etc/mailpit/mailpit.env` (créé en [Partie 1, étape 3](podman.md#étape-3--créer-le-fichier-de-configuration-de-mailpit)), remplacez la règle par `MP_SMTP_ALLOWED_RECIPIENTS=@mondomaine\.fr$`, puis lancez `sudo systemctl restart mailpit`.
+3. Dans `/etc/mailpit/mailpit.env` (créé en [Partie 1, étape 3](01-podman.md#étape-3--créer-le-fichier-de-configuration-de-mailpit)), remplacez la règle par `MP_SMTP_ALLOWED_RECIPIENTS=@mondomaine\.fr$`, puis lancez `sudo systemctl restart mailpit`.
 
 ## Étape 4 — Vérifier la propagation
 

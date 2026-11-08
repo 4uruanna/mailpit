@@ -219,6 +219,8 @@ sudo systemctl enable --now podman-auto-update.timer
 
 **Entretien courant** (mises à jour, certificat, sauvegardes) : voir la [Partie 5](05-maintenance.md).
 
+**Prévenir une autre application à chaque mail reçu** (webhook) : voir la [Partie 6](06-webhook.md).
+
 **Interface web en HTTPS sur un vrai nom** (au lieu du tunnel SSH) : mettez un reverse proxy (Caddy ou nginx) devant `127.0.0.1:8025`. Gardez `MP_UI_AUTH` activé, et pensez à transmettre les WebSockets, sinon la liste des mails ne se met pas à jour en temps réel.
 
 **Version sans root (rootless)**, si vous préférez ne rien lancer en root :

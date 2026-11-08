@@ -22,8 +22,9 @@ Vous ── tunnel SSH ──► 127.0.0.1:8025  ◄─────────�
 3. [Partie 3 — Test de bout en bout](./mailpit/03-test.md) : envoi d'un vrai mail et dépannage
 4. [Partie 4 — Activer le TLS (STARTTLS) avec Certbot](./mailpit/04-tls.md) : certificat Let's Encrypt et renouvellement automatique
 5. [Partie 5 — Maintenance](./mailpit/05-maintenance.md) : mises à jour, surveillance du certificat, sauvegardes, vérifications régulières
+6. [Partie 6 — Appeler un webhook à la réception d'un mail](./mailpit/06-webhook.md) : prévenir une autre application à chaque nouveau mail (facultatif)
 
-Suivez les parties **dans l'ordre** : la Partie 4 a besoin de l'enregistrement DNS créé en Partie 2.
+Suivez les parties **dans l'ordre** : la Partie 4 a besoin de l'enregistrement DNS créé en Partie 2. La Partie 6 est facultative et ne dépend que de la Partie 1.
 
 ---
 

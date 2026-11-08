@@ -1,6 +1,6 @@
 # Partie 1 — Installer Mailpit avec Podman
 
-> Remplacez les valeurs d'exemple (`mondomaine.fr`, `admin:MotDePasseSolide`…) comme indiqué dans [Avant de commencer](mailpit.md#avant-de-commencer).
+> Remplacez les valeurs d'exemple (`mondomaine.fr`, `admin:MotDePasseSolide`…) comme indiqué dans [Avant de commencer](../mailpit.md#avant-de-commencer).
 
 On lance Mailpit en **root** (« rootful »). C'est le plus simple sur un serveur : le port 25 fonctionne sans réglage système et le service démarre au boot sans configuration supplémentaire. La version sans root est en [fin de page](#pour-aller-plus-loin).
 
@@ -60,9 +60,12 @@ sudo chmod 600 /etc/mailpit/mailpit.env
 
 > ℹ️ Ne mettez **pas** de `MP_SMTP_AUTH`. Les serveurs qui vous envoient des mails depuis Internet (Gmail, etc.) ne s'authentifient pas : avec une authentification SMTP obligatoire, ils seraient tous refusés. C'est `MP_SMTP_ALLOWED_RECIPIENTS` qui filtre les mails acceptés.
 
+> ⚠️ Gardez les `\` devant les points dans `MP_SMTP_ALLOWED_RECIPIENTS` (sans eux, un point veut dire « n'importe quel caractère »), et ne mettez pas de guillemets autour des valeurs.
+
 ## Étape 4 — Créer le service systemd (Quadlet)
 
 ```bash
+sudo mkdir -p /etc/containers/systemd
 sudo nano /etc/containers/systemd/mailpit.container
 ```
 
@@ -99,8 +102,25 @@ Points importants :
 
 - `docker.io/…` : écrivez le nom **complet** de l'image, Podman n'a pas de registre par défaut sous Debian.
 - `127.0.0.1:8025` : l'interface web n'est **pas** exposée sur Internet. On y accède par tunnel SSH (étape 7).
+- Le fichier doit se terminer par `.container` : c'est cette extension que Quadlet reconnaît.
+
+Vérifiez que Quadlet comprend le fichier :
+
+```bash
+sudo /usr/lib/systemd/system-generators/podman-system-generator --dryrun 2>&1 | head -40
+```
+
+Vous devez voir un bloc `---mailpit.service---` avec une ligne `ExecStart=/usr/bin/podman run ...`. Un message d'erreur qui cite `mailpit.container` signale une faute de frappe.
 
 ## Étape 5 — Démarrer le service
+
+Téléchargez d'abord l'image. Sinon, le premier démarrage la télécharge, et sur une connexion lente il peut dépasser le délai de démarrage de systemd :
+
+```bash
+sudo podman pull docker.io/axllent/mailpit:latest
+```
+
+Puis :
 
 ```bash
 sudo systemctl daemon-reload
@@ -120,33 +140,51 @@ sudo journalctl -u mailpit -n 30       # les logs de Mailpit
 Test d'envoi **depuis le serveur lui-même** :
 
 ```bash
-# Doit être ACCEPTÉ (destinataire autorisé)
+# Doit être ACCEPTÉ : code 250 à la fin
 swaks --server 127.0.0.1 --port 25 --to essai@test.mondomaine.fr
 
-# Doit être REFUSÉ (destinataire hors du sous-domaine de test)
+# Doit être REFUSÉ : code d'erreur 5xx après RCPT TO
 swaks --server 127.0.0.1 --port 25 --to quelquun@gmail.com
 ```
 
-Vérifiez que le premier mail est bien arrivé :
+Vérifiez que le premier mail est bien arrivé. Le résultat doit contenir `"total":1`. Avec `-u admin` sans mot de passe, curl vous le demande, et il ne reste pas dans l'historique du shell :
 
 ```bash
-curl -s -u admin:MotDePasseSolide http://127.0.0.1:8025/api/v1/messages | head -c 400
+curl -s -u admin http://127.0.0.1:8025/api/v1/messages | head -c 400
 ```
 
 ## Étape 6 — Ouvrir le port 25 dans le pare-feu
 
-Debian n'active pas de pare-feu par défaut. Si vous en avez un :
+Debian n'active pas de pare-feu par défaut. Vérifiez avec `sudo ufw status` (« inactive » ou « command not found » : rien à faire ici).
+
+**Si ufw est actif**, `ufw allow 25/tcp` ne suffit **pas**. Podman redirige les connexions du port 25 vers le conteneur, qui est sur son propre réseau (`10.88.0.0/16` par défaut), port 1025. Ce trafic est donc **routé** : il passe par la chaîne `FORWARD`, que ufw bloque par défaut. Il faut une règle de routage :
 
 ```bash
-# avec ufw
-sudo ufw allow 25/tcp
+sudo ufw route allow proto tcp to 10.88.0.0/16 port 1025 comment 'Mailpit SMTP (Podman)'
+sudo ufw status                 # doit afficher : 10.88.0.0/16 1025/tcp  ALLOW FWD  Anywhere
 ```
+
+Pour vérifier le réseau du conteneur : `sudo podman network inspect podman | grep subnet`.
 
 Si vous avez activé le **pare-feu réseau OVH** (« Edge Network Firewall ») sur l'IP du serveur dans l'espace client, autorisez-y aussi le TCP 25 entrant.
 
+### Serveur à la maison (derrière une box)
+
+Si Mailpit tourne sur une machine chez vous, Internet ne voit que **l'IP publique de la box**. Dans ce cas :
+
+1. **Vérifiez que votre opérateur ne bloque pas le port 25 entrant.** Certaines offres grand public le bloquent ou le rendent désactivable dans l'espace client. Sans ce port, rien n'arrivera.
+2. **Fixez l'IP locale de la machine** : dans la box, créez un bail DHCP statique (« réservation d'adresse »). Pour trouver cette IP, lancez `ip -4 addr show` et prenez l'adresse `192.168.x.x`, pas `10.88.x.x` qui est celle de Podman.
+3. **Ajoutez une redirection de port** dans la box (« NAT/PAT », « Redirection de ports ») : TCP, port externe **25** → IP locale de la machine, port **25**. N'ouvrez **pas** le 8025.
+4. Dans la Partie 2, `IP_DU_SERVEUR` est l'**IP publique de la box** : `curl -4 -s https://ifconfig.me`.
+5. La machine doit rester allumée, sans mise en veille.
+
+> ℹ️ Depuis votre réseau local, une connexion vers votre propre IP publique échoue souvent, même si tout est bien configuré : beaucoup de box ne gèrent pas ce « retour » (le *hairpin NAT*). Testez depuis l'extérieur, ou envoyez un vrai mail ([Partie 3](03-test.md)).
+
 ## Étape 7 — Accéder à l'interface web
 
-Depuis **votre ordinateur**, ouvrez un tunnel SSH :
+Si vous êtes directement sur le serveur (par exemple une machine chez vous), ouvrez simplement **http://localhost:8025**.
+
+Sinon, depuis **votre ordinateur**, ouvrez un tunnel SSH :
 
 ```bash
 ssh -L 8025:127.0.0.1:8025 utilisateur@IP_DU_SERVEUR
@@ -165,7 +203,7 @@ Laissez cette fenêtre ouverte, puis ouvrez **http://localhost:8025** dans votre
 | Interface web : erreur 401 | Identifiants différents de ceux de `MP_UI_AUTH` |
 | Les mails disparaissent au redémarrage | `MP_DATABASE` absent du fichier env ou volume non monté |
 
-Pour les problèmes de réception depuis Internet, voir le [dépannage de la Partie 3](test.md#dépannage).
+Pour les problèmes de réception depuis Internet, voir le [dépannage de la Partie 3](03-test.md#dépannage).
 
 ---
 
@@ -177,7 +215,7 @@ Pour les problèmes de réception depuis Internet, voir le [dépannage de la Par
 sudo systemctl enable --now podman-auto-update.timer
 ```
 
-**Chiffrement STARTTLS** : voir la [Partie 4](tls.md).
+**Chiffrement STARTTLS** : voir la [Partie 4](04-tls.md).
 
 **Interface web en HTTPS sur un vrai nom** (au lieu du tunnel SSH) : mettez un reverse proxy (Caddy ou nginx) devant `127.0.0.1:8025`. Gardez `MP_UI_AUTH` activé, et pensez à transmettre les WebSockets, sinon la liste des mails ne se met pas à jour en temps réel.
 
@@ -208,7 +246,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now container-mailpit.service
 ```
 
-Ici, `systemctl enable` est bien nécessaire. Le service s'appelle `container-mailpit` : remplacez `mailpit` par `container-mailpit` dans les commandes `systemctl` et `journalctl` des autres parties. Pour le TLS, voir aussi la [note Debian 12 de la Partie 4](tls.md#debian-12).
+Ici, `systemctl enable` est bien nécessaire. Le service s'appelle `container-mailpit` : remplacez `mailpit` par `container-mailpit` dans les commandes `systemctl` et `journalctl` des autres parties. Pour le TLS, voir aussi la [note Debian 12 de la Partie 4](04-tls.md#debian-12).
 
 ---
 

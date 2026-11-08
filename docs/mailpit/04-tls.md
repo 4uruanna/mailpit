@@ -1,12 +1,12 @@
 # Partie 4 — Activer le TLS (STARTTLS) avec Certbot
 
-> Remplacez les valeurs d'exemple (`mail.mondomaine.fr`, `vous@exemple.fr`…) comme indiqué dans [Avant de commencer](mailpit.md#avant-de-commencer).
+> Remplacez les valeurs d'exemple (`mail.mondomaine.fr`, `vous@exemple.fr`…) comme indiqué dans [Avant de commencer](../mailpit.md#avant-de-commencer).
 
 Sans TLS, les mails arrivent quand même, mais **en clair** sur Internet. Avec un certificat Let's Encrypt pour `mail.mondomaine.fr`, Mailpit propose **STARTTLS**, et les serveurs expéditeurs (Gmail, Outlook…) chiffrent la connexion.
 
 Principe : Certbot obtient le certificat et le renouvelle tout seul. À chaque obtention ou renouvellement, un petit script (un « deploy hook ») copie le certificat dans `/etc/mailpit/certs/` et redémarre Mailpit. Le conteneur ne voit que ces deux fichiers, pas tout `/etc/letsencrypt`.
 
-> Prérequis : l'enregistrement A `mail.mondomaine.fr` ([Partie 2, étape 2](ovh-dns-zone.md#étape-2--ajouter-lenregistrement-a)) doit **déjà répondre** : `dig +short A mail.mondomaine.fr` affiche l'IP du serveur.
+> Prérequis : l'enregistrement A `mail.mondomaine.fr` ([Partie 2, étape 2](02-ovh-dns-zone.md#étape-2--ajouter-lenregistrement-a)) doit **déjà répondre** : `dig +short A mail.mondomaine.fr` affiche l'IP du serveur.
 
 ## Étape 1 — Installer Certbot
 
@@ -54,6 +54,8 @@ Let's Encrypt vérifie que vous contrôlez le domaine en se connectant au **port
 sudo ss -ltnp | grep ':80 '     # aucune ligne = port libre
 sudo ufw allow 80/tcp           # si vous utilisez ufw (et pare-feu réseau OVH le cas échéant)
 ```
+
+Serveur à la maison : ajoutez aussi sur la box une redirection TCP **80** → IP locale de la machine, port 80. Ici, `ufw allow` suffit, car Certbot écoute directement sur la machine et pas dans un conteneur.
 
 Puis :
 
@@ -109,13 +111,13 @@ sudo ls -l /etc/mailpit/certs/      # fullchain.pem et privkey.pem
 
 ## Étape 4 — Brancher le certificat sur Mailpit
 
-1. Ajoutez à la fin de `/etc/mailpit/mailpit.env` ([Partie 1, étape 3](podman.md#étape-3--créer-le-fichier-de-configuration-de-mailpit)) :
+1. Ajoutez à la fin de `/etc/mailpit/mailpit.env` ([Partie 1, étape 3](01-podman.md#étape-3--créer-le-fichier-de-configuration-de-mailpit)) :
    ```ini
    # Certificat pour STARTTLS (chemins vus depuis le conteneur)
    MP_SMTP_TLS_CERT=/certs/fullchain.pem
    MP_SMTP_TLS_KEY=/certs/privkey.pem
    ```
-2. Dans `/etc/containers/systemd/mailpit.container` ([Partie 1, étape 4](podman.md#étape-4--créer-le-service-systemd-quadlet)), ajoutez cette ligne dans la section `[Container]`, sous `Volume=mailpit-data:/data` :
+2. Dans `/etc/containers/systemd/mailpit.container` ([Partie 1, étape 4](01-podman.md#étape-4--créer-le-service-systemd-quadlet)), ajoutez cette ligne dans la section `[Container]`, sous `Volume=mailpit-data:/data` :
    ```ini
    Volume=/etc/mailpit/certs:/certs:ro
    ```
@@ -174,11 +176,11 @@ systemctl list-timers | grep certbot
 
 ### Debian 12
 
-Si vous avez suivi l'[annexe Debian 12](podman.md#annexe--debian-12) :
+Si vous avez suivi l'[annexe Debian 12](01-podman.md#annexe--debian-12) :
 
 - le service s'appelle `container-mailpit` : adaptez la dernière ligne du script de déploiement ;
 - au lieu de l'étape 4.2, ajoutez `-v /etc/mailpit/certs:/certs:ro` à la commande `podman run`, puis régénérez le service avec les mêmes commandes que dans l'annexe.
 
 ---
 
-[←](test.md) · [Sommaire](mailpit.md)
+[←](03-test.md) · [Sommaire](../mailpit.md)

@@ -7,6 +7,7 @@
    ```bash
    sudo journalctl -u mailpit -f
    ```
+   > ℹ️ Par défaut, Mailpit ne journalise **que les refus et les erreurs**. Un mail accepté n'apparaît pas dans les logs, c'est normal. Pour voir chaque connexion (IP de l'expéditeur comprise), ajoutez temporairement `MP_VERBOSE=true` dans `/etc/mailpit/mailpit.env`, puis lancez `sudo systemctl restart mailpit`. Retirez la ligne une fois le test terminé.
 3. Il doit apparaître dans l'interface web (http://localhost:8025 via le [tunnel SSH](01-podman.md#étape-7--accéder-à-linterface-web)).
 
 > ⚠️ **Tester depuis chez vous avec `telnet`/`nc` sur le port 25 ne prouve rien.** La plupart des box françaises bloquent le port 25 **sortant**. Le test peut donc échouer même si tout est bien configuré. Envoyer un vrai mail depuis Gmail est le test fiable.

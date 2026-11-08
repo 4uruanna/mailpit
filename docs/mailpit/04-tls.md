@@ -129,6 +129,8 @@ Let's Encrypt doit vérifier que vous contrôlez le domaine. Ici, Certbot crée 
    ```
    Certbot enregistre ces options (plugin, fichier d'identifiants, deploy hook) dans `/etc/letsencrypt/renewal/mail.mondomaine.fr.conf` : les renouvellements automatiques les réutilisent.
 
+   Le message « Certbot has set up a scheduled task » s'affiche toujours, même avec l'installation par pip. Ici, c'est **votre** timer `certbot-renew.timer` (étape 1) qui renouvelle le certificat : vérifiez qu'il est actif avec `systemctl list-timers | grep certbot-renew`.
+
 > ⚠️ Ces identifiants permettent de modifier votre zone DNS : protégez `ovh.ini` comme un mot de passe, et ne le mettez jamais dans un dépôt Git. En cas de fuite, révoquez le jeton depuis la console API OVH (`https://eu.api.ovh.com/console/`) : `GET /me/api/credential` pour trouver son identifiant, puis `DELETE /me/api/credential/{credentialId}`.
 
 Vérifiez que le script a bien copié les fichiers :

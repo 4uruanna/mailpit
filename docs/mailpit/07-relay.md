@@ -22,8 +22,10 @@ Le **relais** (dossier [`relay/`](../../relay/README.md) du dépôt) comble ce m
 
 Ce que le relais apporte :
 
-- **Le mail complet** : en-têtes, texte, HTML, pièces jointes et images intégrées (10 Mo maximum par pièce, réglable côté API), et en option le mail brut `.eml`. Tout est enregistré par l'API : le relais ne garde rien.
+- **Le mail complet** : en-têtes, texte, HTML, pièces jointes et images intégrées (5 Mo maximum par pièce, réglable côté API), et en option le mail brut `.eml`. Tout est enregistré par l'API : le relais ne garde rien.
 - **Aucun mail perdu.** Le relais ne pose le tag `relayed` sur un mail dans Mailpit qu'une fois que l'API a confirmé avoir **tout** enregistré. Tant que ce n'est pas le cas, il réessaie (30 s, 1 min, 2 min… puis toutes les heures, sans limite), y compris après un redémarrage. C'est Mailpit qui sert de file d'attente. Mailpit seul, lui, n'essaie qu'une fois.
+- **Un mail à la fois.** Le relais termine un mail (message, pièces jointes une par une, tag) avant de passer au suivant : il n'envoie jamais deux requêtes en même temps à l'API.
+- **Les 1000 derniers mails, des deux côtés.** Mailpit (`MP_MAX_MESSAGES=1000`, [Partie 1](01-podman.md#étape-3--créer-le-fichier-de-configuration-de-mailpit)) et l'API (`webhook.max_messages`) suppriment les plus anciens au-delà de 1000.
 - **Un jeton des deux côtés.** Le relais s'authentifie auprès de l'API avec un jeton configuré dans `relay.env` **et** dans le `config.php` de l'API, envoyé dans un en-tête (jamais dans l'URL).
 - **Rien n'est exposé.** L'interface de Mailpit reste sur `127.0.0.1`, et le relais n'ouvre aucun port sur le serveur.
 
@@ -262,7 +264,9 @@ sudo systemctl restart mailpit mailpit-relay
 
 **Changer le jeton** : générez-en un nouveau (`openssl rand -hex 32`), mettez-le dans le `config.php` de l'API, puis dans `RELAY_API_TOKEN`, et lancez `sudo systemctl restart mailpit-relay`. Entre les deux, le relais reçoit des `401` et réessaie : aucun mail n'est perdu.
 
-Un arrêt du relais ne fait perdre **aucun** mail, même ceux arrivés pendant l'arrêt : au redémarrage, il relaie tous les mails qui n'ont pas encore le tag `relayed`. La seule perte possible est un mail **supprimé de Mailpit** avant d'avoir été relayé (à la main, ou par `MP_MAX_MESSAGES` / `MP_MAX_AGE`) : si l'API reste longtemps injoignable, gardez de la marge sur ces limites.
+Un arrêt du relais ne fait perdre **aucun** mail, même ceux arrivés pendant l'arrêt : au redémarrage, il relaie tous les mails qui n'ont pas encore le tag `relayed`. La seule perte possible est un mail **supprimé de Mailpit** avant d'avoir été relayé (à la main, ou par `MP_MAX_MESSAGES` / `MP_MAX_AGE`). Avec `MP_MAX_MESSAGES=1000`, cela n'arrive que si plus de 1000 mails arrivent pendant une panne de l'API.
+
+**Rétention** : gardez la même valeur dans `MP_MAX_MESSAGES` (`/etc/mailpit/mailpit.env`) et dans `webhook.max_messages` (`config.php` de l'API), 1000 par défaut. Les deux côtés conservent alors les mêmes mails.
 
 ---
 
@@ -302,13 +306,14 @@ L'ancienne version gardait une file d'attente sur disque et passait le jeton dan
 | Logs de **Mailpit** : `connection refused` | Le relais est arrêté : `sudo systemctl status mailpit-relay` |
 | Relais : `Mailpit /api/v1/message/… : HTTP 401` | `RELAY_MAILPIT_AUTH` ne correspond pas à `MP_UI_AUTH` |
 | Relais : `Could not resolve host: mailpit` | Mailpit n'est pas sur le réseau `mailpit` (étape 4), ou son conteneur ne s'appelle pas `mailpit` |
+| Relais : `un autre relais tourne déjà dans ce conteneur` | Vous avez lancé `bin/relay.php` à la main dans le conteneur : inutile, le relais tourne déjà. Les scripts `status.php` et `retry-failed.php`, eux, peuvent être lancés à tout moment |
 | Relais : `configuration invalide : RELAY_API_TOKEN manquant ou trop court` | Mettez dans `RELAY_API_TOKEN` la valeur de `webhook.token` (32 caractères minimum) |
 | Relais : `RELAY_TARGET_URL ne doit pas contenir de « ?… »` | Ancienne configuration : retirez `?token=…` de l'URL et mettez le jeton dans `RELAY_API_TOKEN` |
 | Relais : `HTTP 401` | Jeton différent entre `RELAY_API_TOKEN` et `webhook.token` de l'API, ou `.htaccess` de l'API pas à jour (l'en-tête `Authorization` n'arrive pas à PHP). Le relais réessaie : corrigez, il n'y a rien à relancer |
 | Relais : `HTTP 403` | IP du serveur absente de `allowed_ips` (pensez à l'IPv6). Le relais réessaie : corrigez l'API, il n'y a rien à relancer |
 | Relais : `HTTP 500` | Souvent l'API pas à jour : `sql/upgrade-002-pieces-jointes.sql` pas importé, ou `webhook.token` absent de `config.php`. Détail dans `var/log/api.log` |
 | Relais : `refusé par l'API (… HTTP 413 …)` | Le JSON du mail dépasse `max_body_size` de l'API : augmentez-le dans son `config.php`, puis lancez `retry-failed.php` |
-| Relais : `au-delà de la limite de l'API, seule sa description est enregistrée` | Pièce jointe de plus de 10 Mo (`max_attachment_size`), ou `.eml` de plus de 25 Mo (`max_raw_size`). Normal : le mail est livré sans ce contenu |
+| Relais : `au-delà de la limite de l'API, seule sa description est enregistrée` | Pièce jointe de plus de 5 Mo (`max_attachment_size`), ou `.eml` de plus de 25 Mo (`max_raw_size`). Normal : le mail est livré sans ce contenu |
 | Relais : `API (message) injoignable : …` | Hébergement en panne, DNS ou certificat : le relais réessaie tout seul |
 | Relais : `supprimé de Mailpit avant d'avoir été relayé` | Mail supprimé avant d'être relayé (à la main, ou par `MP_MAX_MESSAGES` / `MP_MAX_AGE`) : il ne peut plus être envoyé |
 | Relais : `Mailpit … : HTTP 400` sur la recherche | Filtre `RELAY_QUERY` mal écrit (syntaxe de recherche de Mailpit) |

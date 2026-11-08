@@ -14,6 +14,9 @@ use Throwable;
  *    puis envoie le contenu de chaque pièce que l'API réclame (une requête par pièce, avec SHA-256).
  * 3. Seulement quand l'API répond « complete », pose le tag RELAY_TAG_DONE dans Mailpit.
  *
+ * Les mails sont traités strictement un par un : le message, puis ses pièces une à une, puis le tag,
+ * avant de passer au mail suivant. Le relais n'envoie donc jamais deux requêtes en même temps à l'API.
+ *
  * Tant que le tag n'est pas posé, le mail est réessayé (30 s, 1 min, 2 min… puis toutes les heures),
  * même après un redémarrage du relais : aucun mail ne peut être perdu en route. L'API ignore
  * les doublons, renvoyer un mail est donc sans risque.

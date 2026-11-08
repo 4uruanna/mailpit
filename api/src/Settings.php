@@ -29,6 +29,8 @@ final readonly class Settings
         public int $maxBodySize,
         public int $maxPartSize,
         public int $maxRawSize,
+        /** Nombre de mails gardés (les plus anciens sont supprimés), 0 = sans limite. */
+        public int $maxMessages,
         public string $storageDir,
         public array $trustedProxies,
         public string $proxyHeader,
@@ -81,12 +83,23 @@ final readonly class Settings
             allowedIps: self::stringList($webhook['allowed_ips'] ?? [], 'webhook.allowed_ips'),
             token: trim($token),
             maxBodySize: self::size($webhook, 'max_body_size', 16 * 1024 * 1024),
-            maxPartSize: self::size($webhook, 'max_attachment_size', 10 * 1024 * 1024),
+            maxPartSize: self::size($webhook, 'max_attachment_size', 5 * 1024 * 1024),
             maxRawSize: self::size($webhook, 'max_raw_size', 25 * 1024 * 1024),
+            maxMessages: self::maxMessages($webhook),
             storageDir: rtrim((string) $storageDir, '/'),
             trustedProxies: self::stringList($proxy['trusted_proxies'] ?? [], 'proxy.trusted_proxies'),
             proxyHeader: (string) ($proxy['header'] ?? 'X-Forwarded-For'),
         );
+    }
+
+    private static function maxMessages(array $section): int
+    {
+        $value = $section['max_messages'] ?? 1000;
+        if (!is_int($value) || $value < 0) {
+            throw new InvalidArgumentException('« webhook.max_messages » doit être un entier positif (0 = sans limite)');
+        }
+
+        return $value;
     }
 
     private static function size(array $section, string $key, int $default): int

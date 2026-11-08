@@ -53,10 +53,15 @@ return [
         // Une pièce plus grosse est décrite en base (nom, type, taille) mais son
         // contenu n'est pas enregistré (état « too_large »).
         // ⚠️ L'hébergement doit accepter des requêtes de cette taille (voir le README).
-        'max_attachment_size' => 10 * 1024 * 1024,
+        'max_attachment_size' => 5 * 1024 * 1024,
 
         // Taille maximale du mail brut (.eml), si le relais l'envoie (RELAY_INCLUDE_RAW=true).
         'max_raw_size' => 25 * 1024 * 1024,
+
+        // Nombre de mails gardés : à chaque nouveau mail, les plus anciens au-delà de
+        // cette limite sont supprimés (base ET fichiers). Même valeur que MP_MAX_MESSAGES
+        // de Mailpit, pour garder les mêmes mails des deux côtés. 0 = sans limite.
+        'max_messages' => 1000,
 
         // Dossier des pièces jointes et des mails bruts : un sous-dossier par mail.
         // Il doit être accessible en écriture par PHP, et jamais servi par le web.

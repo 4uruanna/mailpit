@@ -8,6 +8,7 @@ use App\Http\Json;
 use App\Mailpit\InvalidPayloadException;
 use App\Mailpit\Message;
 use App\Middleware\IpFilterMiddleware;
+use App\Persistence\FileStore;
 use App\Persistence\MessageRepository;
 use JsonException;
 use Psr\Http\Message\ResponseFactoryInterface;
@@ -25,15 +26,19 @@ use Psr\Http\Message\ServerRequestInterface;
  * « missing » liste les pièces annoncées dans « Parts » dont le contenu est attendu
  * (PUT /hook/mailpit/{ID}/parts/{PartID}). « too_large » liste celles qui dépassent
  * la limite de taille : elles sont décrites en base, mais leur contenu n'est pas enregistré.
+ *
+ * Après chaque nouveau mail, les plus anciens au-delà de webhook.max_messages sont supprimés.
  */
 final readonly class MailpitWebhookAction
 {
     public function __construct(
         private MessageRepository $repository,
+        private FileStore $files,
         private ResponseFactoryInterface $responseFactory,
         private int $maxBodySize,
         private int $maxPartSize,
         private int $maxRawSize,
+        private int $maxMessages,
     ) {
     }
 
@@ -93,11 +98,41 @@ final readonly class MailpitWebhookAction
             $this->maxRawSize,
         );
 
+        if ($result['status'] === 'created') {
+            $this->prune();
+        }
+
         return Json::response(
             $this->responseFactory,
             $result['status'] === 'created' ? 201 : 200,
             ['id' => $message->id] + $result,
         );
+    }
+
+    /**
+     * Ne garde que les max_messages mails les plus récents. Un échec ici ne doit pas faire
+     * échouer l'enregistrement du mail (déjà validé) : il est seulement écrit dans le log,
+     * et la purge sera refaite au prochain mail.
+     */
+    private function prune(): void
+    {
+        if ($this->maxMessages === 0) {
+            return;
+        }
+
+        try {
+            $deleted = $this->repository->prune($this->maxMessages);
+        } catch (\Throwable $e) {
+            error_log('[prune] purge des anciens mails impossible : ' . $e->getMessage());
+
+            return;
+        }
+
+        foreach ($deleted as $message) {
+            if (!$this->files->deleteMessage($message['mailpit_id'], $message['raw_file'])) {
+                error_log(sprintf('[prune] fichiers de %s pas tous effacés', $message['mailpit_id']));
+            }
+        }
     }
 
     private function error(int $status, string $message): ResponseInterface

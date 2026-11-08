@@ -181,6 +181,49 @@ final readonly class MessageRepository
         });
     }
 
+    /**
+     * Supprime les mails les plus anciens pour n'en garder que $keep (ordre d'arrivée dans l'API).
+     * Leurs lignes de mailpit_parts partent avec eux (ON DELETE CASCADE).
+     * Au plus $batch mails par appel : une grosse purge se fait en plusieurs fois.
+     *
+     * @return list<array{mailpit_id: string, raw_file: ?string}> mails supprimés, pour effacer leurs fichiers
+     */
+    public function prune(int $keep, int $batch = 200): array
+    {
+        if ($keep < 1) {
+            return [];
+        }
+
+        return $this->transaction(function (PDO $pdo) use ($keep, $batch): array {
+            // ID du plus récent des mails à supprimer : celui qui suit les $keep plus récents.
+            $threshold = $pdo->prepare('SELECT id FROM mailpit_messages ORDER BY id DESC LIMIT 1 OFFSET ?');
+            $threshold->bindValue(1, $keep, PDO::PARAM_INT);
+            $threshold->execute();
+            $maxId = $threshold->fetchColumn();
+            if ($maxId === false) {
+                return [];
+            }
+
+            $select = $pdo->prepare('SELECT id, mailpit_id, raw_file FROM mailpit_messages WHERE id <= ? ORDER BY id LIMIT ? FOR UPDATE');
+            $select->bindValue(1, (int) $maxId, PDO::PARAM_INT);
+            $select->bindValue(2, $batch, PDO::PARAM_INT);
+            $select->execute();
+            $rows = $select->fetchAll();
+            if ($rows === []) {
+                return [];
+            }
+
+            $ids = array_map(static fn (array $row): int => (int) $row['id'], $rows);
+            $placeholders = implode(',', array_fill(0, count($ids), '?'));
+            $pdo->prepare("DELETE FROM mailpit_messages WHERE id IN ($placeholders)")->execute($ids);
+
+            return array_map(static fn (array $row): array => [
+                'mailpit_id' => (string) $row['mailpit_id'],
+                'raw_file'   => $row['raw_file'] === null ? null : (string) $row['raw_file'],
+            ], $rows);
+        });
+    }
+
     /** @return array{complete: bool, missing: list<string>, too_large: list<string>} */
     public function completion(int $messagePk): array
     {

@@ -9,6 +9,7 @@ declare(strict_types=1);
  *    envoyé par le récepteur), et au plus tard toutes les RELAY_POLL_INTERVAL secondes.
  * Le relais n'enregistre rien : un mail n'est marqué « relayé » dans Mailpit (tag) qu'une fois
  * enregistré par l'API. Arrêté au mauvais moment, il reprend simplement là où il en était.
+ * Les mails sont envoyés un par un : jamais deux requêtes simultanées vers l'API.
  * Si le récepteur s'arrête, le relais quitte en erreur et Podman / systemd le redémarre.
  */
 
@@ -25,6 +26,15 @@ try {
     $config = Config::fromEnv();
 } catch (Throwable $e) {
     Log::error('configuration invalide : ' . $e->getMessage());
+    exit(1);
+}
+
+// Un seul relais à la fois : sinon deux processus enverraient des mails à l'API en même temps.
+// Le verrou est une socket Unix « abstraite » (sans fichier : le conteneur est en lecture seule),
+// libérée automatiquement à la fin du processus.
+$lock = @stream_socket_server("unix://\0mailpit-relay.lock", $errorCode, $errorMessage);
+if ($lock === false) {
+    Log::error('un autre relais tourne déjà dans ce conteneur : arrêt');
     exit(1);
 }
 

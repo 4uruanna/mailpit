@@ -155,7 +155,7 @@ swaks --server 127.0.0.1 --port 25 --to essai@test.mondomaine.fr --tls
 
 ## Données et sauvegardes
 
-La rétention est automatique : `MP_MAX_MESSAGES` et `MP_MAX_AGE` ([Partie 1, étape 3](01-podman.md#étape-3--créer-le-fichier-de-configuration-de-mailpit)) suppriment les plus anciens mails.
+La rétention est automatique : `MP_MAX_MESSAGES` (les 1000 derniers mails) et `MP_MAX_AGE` ([Partie 1, étape 3](01-podman.md#étape-3--créer-le-fichier-de-configuration-de-mailpit)) suppriment les plus anciens mails. Avec le relais de la [Partie 7](07-relay.md), l'API garde elle aussi les 1000 derniers (`webhook.max_messages`).
 
 Place occupée par les mails :
 

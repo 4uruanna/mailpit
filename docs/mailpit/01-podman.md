@@ -39,8 +39,8 @@ Contenu (adaptez le domaine et le mot de passe) :
 # Stockage sur disque (sinon les mails disparaissent au redémarrage)
 MP_DATABASE=/data/mailpit.db
 
-# Garde au maximum 5000 mails, et pas plus de 30 jours
-MP_MAX_MESSAGES=5000
+# Garde au maximum les 1000 derniers mails, et pas plus de 30 jours
+MP_MAX_MESSAGES=1000
 MP_MAX_AGE=30d
 
 # N'accepte QUE les mails destinés au sous-domaine de test (expression régulière)

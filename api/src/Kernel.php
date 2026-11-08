@@ -39,16 +39,19 @@ final class Kernel
 
         $repository = new MessageRepository(new Database($settings->db));
 
+        $files = new FileStore($settings->storageDir);
         $hook = new MailpitWebhookAction(
             $repository,
+            $files,
             $responseFactory,
             $settings->maxBodySize,
             $settings->maxPartSize,
             $settings->maxRawSize,
+            $settings->maxMessages,
         );
         $upload = new UploadPartAction(
             $repository,
-            new FileStore($settings->storageDir),
+            $files,
             $responseFactory,
             $settings->maxPartSize,
             $settings->maxRawSize,

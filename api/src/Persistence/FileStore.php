@@ -114,6 +114,38 @@ final readonly class FileStore
         @unlink($tmp);
     }
 
+    /**
+     * Efface les fichiers d'un mail supprimé de la base : son dossier, et le .eml
+     * des anciennes versions (enregistré à la racine du dossier de stockage).
+     *
+     * @return bool false si un fichier n'a pas pu être effacé
+     */
+    public function deleteMessage(string $mailpitId, ?string $rawFile): bool
+    {
+        // ID Mailpit déjà validé à l'enregistrement : jamais de « / » ni de « .. ».
+        if (!preg_match('/^[A-Za-z0-9_-]{1,64}$/', $mailpitId)) {
+            return false;
+        }
+
+        $ok = true;
+        $dir = $this->directory . '/' . $mailpitId;
+        if (is_dir($dir)) {
+            foreach (scandir($dir) ?: [] as $name) {
+                if ($name !== '.' && $name !== '..') {
+                    $ok = @unlink($dir . '/' . $name) && $ok;
+                }
+            }
+            $ok = @rmdir($dir) && $ok;
+        }
+
+        $legacy = $this->directory . '/' . $mailpitId . '.eml';
+        if ($rawFile === $mailpitId . '.eml' && is_file($legacy)) {
+            $ok = @unlink($legacy) && $ok;
+        }
+
+        return $ok;
+    }
+
     private function ensureDir(string $dir): void
     {
         if (!is_dir($dir) && !mkdir($dir, 0700, true) && !is_dir($dir)) {

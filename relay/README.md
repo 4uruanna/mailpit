@@ -16,6 +16,7 @@ Mailpit ── webhook ──► relais : « il y a du nouveau » (le contenu du
 
 - **Rien n'est enregistré par le relais.** C'est Mailpit qui sert de file d'attente : un mail est « à relayer » tant qu'il n'a pas le tag `relayed`. Le conteneur n'a pas de volume et peut tourner en lecture seule.
 - **Aucun mail perdu.** Le tag n'est posé que lorsque l'API a répondu `"complete": true`, c'est-à-dire après avoir enregistré le message **et** toutes ses pièces. Si l'API est injoignable, si le relais est arrêté ou redémarre au milieu d'un envoi, le mail reste sans tag et il est renvoyé (30 s, 1 min, 2 min… puis toutes les heures, sans limite de durée). L'API ignore les doublons : renvoyer un mail est sans risque.
+- **Un mail à la fois.** Le relais envoie le message, puis ses pièces une par une, puis pose le tag, avant de passer au mail suivant : jamais deux requêtes simultanées vers l'API. Un verrou empêche aussi un second relais de démarrer dans le même conteneur. Ne lancez qu'**un seul** conteneur relais par Mailpit.
 - **Le webhook n'est qu'un signal.** Il déclenche une recherche immédiate. Sans lui (webhook perdu, relais arrêté…), le relais cherche de toute façon toutes les `RELAY_POLL_INTERVAL` secondes. Un faux appel ne peut rien injecter : tout est relu dans Mailpit.
 - **Jeton configuré des deux côtés** : `RELAY_API_TOKEN` ici, `webhook.token` dans le `config.php` de l'API. Il voyage dans l'en-tête `Authorization`, jamais dans l'URL.
 - **Intégrité vérifiée.** Chaque pièce est envoyée avec son empreinte SHA-256, comparée à celle de Mailpit avant l'envoi, puis par l'API avant l'enregistrement.
@@ -80,7 +81,7 @@ Variables d'environnement (voir `relay.env.example`) :
 
 La pièce `raw` n'est présente que si `RELAY_INCLUDE_RAW=true`.
 
-**2. Les pièces** que l'API réclame dans sa réponse (`"missing"`), une par requête `PUT`, en binaire, avec l'en-tête `X-Content-SHA256`. L'API ne réclame pas les pièces au-delà de sa limite (10 Mo par défaut) : elle les liste dans `"too_large"`, et le relais l'écrit dans ses logs.
+**2. Les pièces** que l'API réclame dans sa réponse (`"missing"`), une par requête `PUT`, en binaire, avec l'en-tête `X-Content-SHA256`. L'API ne réclame pas les pièces au-delà de sa limite (5 Mo par défaut) : elle les liste dans `"too_large"`, et le relais l'écrit dans ses logs.
 
 **Réponses de l'API :**
 
@@ -93,6 +94,6 @@ La pièce `raw` n'est présente que si `RELAY_INCLUDE_RAW=true`.
 
 ## Limites
 
-- Un mail **supprimé de Mailpit** avant d'avoir été relayé (à la main, ou par `MP_MAX_MESSAGES` / `MP_MAX_AGE`) ne peut plus l'être : c'est la seule copie. Si l'API reste longtemps injoignable, vérifiez que ces limites laissent assez de marge.
+- Un mail **supprimé de Mailpit** avant d'avoir été relayé (à la main, ou par `MP_MAX_MESSAGES` / `MP_MAX_AGE`) ne peut plus l'être : c'est la seule copie. Avec `MP_MAX_MESSAGES=1000`, cela n'arrive que si plus de 1000 mails arrivent pendant une panne de l'API.
 - Retirer le tag `relayed` d'un mail dans l'interface de Mailpit le fait renvoyer. C'est sans risque, car l'API le reconnaît comme un doublon.
 - Le relais garde en mémoire seulement le délai avant le prochain essai de chaque mail en échec. Après un redémarrage, tous les mails en attente sont réessayés tout de suite.

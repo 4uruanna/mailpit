@@ -60,7 +60,7 @@ La colonne `payload` garde le JSON reçu **sans** `Text`, `HTML` ni `Headers`, p
 
 **Pièces jointes.** Le JSON ne contient que leur description. L'API répond avec la liste `missing` des pièces dont elle attend le contenu, que le relais envoie ensuite une par une (`PUT`). Chaque fichier est vérifié (SHA-256), écrit sur le disque, puis la ligne de `mailpit_parts` passe à l'état `stored`. Le message est **complet** (colonne `completed_at` remplie, `"complete": true`) quand plus aucune pièce n'est attendue.
 
-Une pièce plus grosse que `webhook.max_attachment_size` (**10 Mo** par défaut) n'est pas attendue : sa ligne est enregistrée avec l'état `too_large` (nom, type, taille), sans contenu, et elle est listée dans `too_large`. Même chose pour le mail brut au-delà de `webhook.max_raw_size` (25 Mo par défaut).
+Une pièce plus grosse que `webhook.max_attachment_size` (**5 Mo** par défaut) n'est pas attendue : sa ligne est enregistrée avec l'état `too_large` (nom, type, taille), sans contenu, et elle est listée dans `too_large`. Même chose pour le mail brut au-delà de `webhook.max_raw_size` (25 Mo par défaut).
 
 Fichiers sur le disque (dossier `webhook.storage_dir`, par défaut `var/messages/`) :
 
@@ -90,7 +90,8 @@ cp config.example.php config.php
 | `db.host`, `db.name`, `db.user`, `db.password` | Espace client OVH → **Hébergements** → votre hébergement → onglet **Bases de données** |
 | `webhook.allowed_ips` | l'IPv4 **et** l'IPv6 du serveur Mailpit (voir ci-dessous) |
 | `webhook.token` | **obligatoire** : le secret partagé avec le relais, généré avec `openssl rand -hex 32` (32 caractères minimum). La même valeur va dans `RELAY_API_TOKEN` côté relais |
-| `webhook.max_attachment_size` | taille maximale d'une pièce jointe, 10 Mo par défaut |
+| `webhook.max_attachment_size` | taille maximale d'une pièce jointe, 5 Mo par défaut |
+| `webhook.max_messages` | nombre de mails gardés, 1000 par défaut (comme `MP_MAX_MESSAGES` côté Mailpit). `0` = sans limite |
 | `webhook.max_raw_size` | taille maximale du mail brut `.eml`, 25 Mo par défaut |
 | `debug` | `false` en production |
 
@@ -195,7 +196,7 @@ curl -i -X PUT 'https://api.amnesic.dev/hook/mailpit/test-manuel-1/parts/2' \
 
 Réponse attendue : `HTTP/2 201` et `"complete":true`. Le fichier est dans `var/messages/test-manuel-1/part-2`. Supprimez ensuite la ligne de test dans phpMyAdmin (sa pièce est supprimée avec elle) et le dossier `var/messages/test-manuel-1/` par FTP.
 
-**Pièce jointe de 10 Mo** : l'hébergement doit accepter des requêtes de cette taille. Les pièces sont envoyées en `PUT`, que la limite PHP `post_max_size` ne concerne pas. Pour vérifier, recommencez le test ci-dessus avec un fichier de 10 Mo (`head -c 10485760 /dev/urandom > /tmp/test.txt`) et `"Size":10485760` dans le `POST`.
+**Pièce jointe de 5 Mo** : l'hébergement doit accepter des requêtes de cette taille. Les pièces sont envoyées en `PUT`, que la limite PHP `post_max_size` ne concerne pas. Pour vérifier, recommencez le test ci-dessus avec un fichier de 5 Mo (`head -c 5242880 /dev/urandom > /tmp/test.txt`) et `"Size":5242880` dans le `POST`.
 
 **De bout en bout** : envoyez un mail comme en [Partie 1, étape 5](../docs/mailpit/01-podman.md#étape-5--démarrer-le-service) :
 
@@ -225,7 +226,8 @@ Le message doit apparaître dans la table `mailpit_messages`.
 | `413` sur `POST /hook/mailpit` | Le JSON du mail (texte + HTML + en-têtes) dépasse `webhook.max_body_size` (16 Mo par défaut) : augmentez-le |
 | `413` sur `PUT …/parts/…` | La pièce dépasse la limite, alors que sa taille annoncée était plus petite : cas anormal, voir les logs du relais |
 | Log PHP `POST Content-Length of … exceeds the limit` | Un mail au texte ou HTML très lourd dépasse `post_max_size` de l'hébergement. Le JSON est quand même lu et enregistré : l'avertissement est sans effet tant que `display_errors` est désactivé (`environment=production` dans `.ovhconfig`) |
-| Pièce jointe en `too_large` | Elle dépasse `webhook.max_attachment_size` (10 Mo par défaut). Seule sa description est enregistrée |
+| Pièce jointe en `too_large` | Elle dépasse `webhook.max_attachment_size` (5 Mo par défaut). Seule sa description est enregistrée |
+| Des mails anciens ont disparu | Normal : seuls les `webhook.max_messages` derniers (1000 par défaut) sont gardés. Les échecs de purge sont écrits dans `var/log/api.log` (`[prune] …`) |
 | `text_body` toujours vide | Le webhook ne passe pas par le relais (`MP_WEBHOOK_URL` pointe directement sur l'API), ou une mise à jour SQL n'a pas été importée (erreur `Unknown column` ou `Table … doesn't exist` dans le log) |
 | Mail avec `completed_at` vide | Des pièces sont encore attendues (`status = 'pending'` dans `mailpit_parts`). Le relais les renvoie tout seul : voir ses logs |
 | Page blanche / erreur PHP | Version de PHP trop ancienne : vérifiez `.ovhconfig` (8.4 minimum) |
@@ -259,7 +261,13 @@ SELECT mailpit_id, received_at, subject FROM mailpit_messages WHERE completed_at
 SELECT subject, headers->>'$."X-Mailer"[0]' AS mailer FROM mailpit_messages ORDER BY id DESC LIMIT 10;
 ```
 
-Pour supprimer un mail, supprimez sa ligne dans `mailpit_messages` (ses lignes de `mailpit_parts` partent avec elle) et son dossier `var/messages/<mailpit_id>/` par FTP.
+## Rétention : les 1000 derniers mails
+
+À chaque **nouveau** mail, l'API supprime les plus anciens pour n'en garder que `webhook.max_messages` (1000 par défaut) : leur ligne dans `mailpit_messages`, leurs pièces dans `mailpit_parts`, et leur dossier `var/messages/<mailpit_id>/`. « Les plus anciens » s'entend dans l'ordre d'arrivée dans l'API. Une grosse purge (par exemple après avoir baissé la limite) se fait par paquets de 200 mails, au fil des mails suivants.
+
+Gardez la même valeur que `MP_MAX_MESSAGES` côté Mailpit ([Partie 1, étape 3](../docs/mailpit/01-podman.md#étape-3--créer-le-fichier-de-configuration-de-mailpit)) : Mailpit et l'API conservent alors les mêmes mails.
+
+Pour supprimer un mail à la main, supprimez sa ligne dans `mailpit_messages` (ses lignes de `mailpit_parts` partent avec elle) et son dossier `var/messages/<mailpit_id>/` par FTP.
 
 ## Derrière un proxy ou un CDN
 

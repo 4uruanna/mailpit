@@ -14,7 +14,27 @@ final readonly class MailpitClient
     }
 
     /**
-     * Message complet : Text, HTML, en-têtes principaux, liste des pièces jointes…
+     * Recherche de messages (résumés), du plus récent au plus ancien.
+     *
+     * @return array{total: int, messages: list<array<string, mixed>>}
+     * @throws TransientException
+     */
+    public function search(string $query, int $limit, int $start = 0): array
+    {
+        $body = $this->get('/api/v1/search?' . http_build_query(['query' => $query, 'limit' => $limit, 'start' => $start]));
+        $data = $body === null ? null : json_decode($body, true);
+        if (!is_array($data) || !is_array($data['messages'] ?? null)) {
+            throw new TransientException('Mailpit : réponse de recherche invalide');
+        }
+
+        return [
+            'total'    => (int) ($data['messages_count'] ?? $data['total'] ?? 0),
+            'messages' => array_values(array_filter($data['messages'], 'is_array')),
+        ];
+    }
+
+    /**
+     * Message complet : Text, HTML, liste des pièces jointes (Attachments) et images intégrées (Inline).
      * ⚠️ Mailpit marque le message comme lu.
      *
      * @return array<string, mixed>|null null si le message n'existe plus dans Mailpit
@@ -22,28 +42,49 @@ final readonly class MailpitClient
      */
     public function message(string $id): ?array
     {
-        $response = $this->get('/api/v1/message/' . rawurlencode($id));
-        if ($response === null) {
-            return null;
-        }
+        return $this->getJson('/api/v1/message/' . rawurlencode($id));
+    }
 
-        $data = json_decode($response, true);
-        if (!is_array($data)) {
-            throw new TransientException('réponse JSON invalide de Mailpit');
-        }
+    /**
+     * Tous les en-têtes du message : {"Nom": ["valeur", …]}.
+     *
+     * @return array<string, list<string>>|null
+     * @throws TransientException
+     */
+    public function headers(string $id): ?array
+    {
+        return $this->getJson('/api/v1/message/' . rawurlencode($id) . '/headers');
+    }
 
-        return $data;
+    /**
+     * Contenu d'une pièce (pièce jointe ou image intégrée).
+     *
+     * @throws TransientException
+     */
+    public function part(string $id, string $partId, int $maxSize): ?string
+    {
+        return $this->get('/api/v1/message/' . rawurlencode($id) . '/part/' . rawurlencode($partId), $maxSize);
     }
 
     /**
      * Mail brut (.eml), pièces jointes comprises.
      *
-     * @return string|null null si le message n'existe plus
      * @throws TransientException
      */
-    public function raw(string $id): ?string
+    public function raw(string $id, int $maxSize): ?string
     {
-        return $this->get('/api/v1/message/' . rawurlencode($id) . '/raw', $this->config->maxRawSize);
+        return $this->get('/api/v1/message/' . rawurlencode($id) . '/raw', $maxSize);
+    }
+
+    /**
+     * Remplace les tags du message (l'API de Mailpit ne sait que remplacer la liste complète).
+     *
+     * @param list<string> $tags
+     * @throws TransientException
+     */
+    public function setTags(string $id, array $tags): void
+    {
+        $this->put('/api/v1/tags', ['IDs' => [$id], 'Tags' => array_values($tags)], 'tags');
     }
 
     /**
@@ -54,20 +95,51 @@ final readonly class MailpitClient
     public function markUnread(string $id): void
     {
         // Toujours préciser IDs : sans liste, Mailpit modifie TOUS les messages.
+        $this->put('/api/v1/messages', ['IDs' => [$id], 'Read' => false], 'marquage non lu');
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     * @throws TransientException
+     */
+    private function put(string $path, array $data, string $what): void
+    {
         $response = Http::request(
             'PUT',
-            $this->config->mailpitUrl . '/api/v1/messages',
+            $this->config->mailpitUrl . $path,
             ['Content-Type: application/json'],
-            json_encode(['IDs' => [$id], 'Read' => false], JSON_THROW_ON_ERROR),
+            json_encode($data, JSON_THROW_ON_ERROR),
             $this->config->mailpitAuth,
             $this->config->timeout,
         );
         if ($response['status'] < 200 || $response['status'] > 299) {
-            throw new TransientException(self::describe($response, 'marquage non lu'));
+            throw new TransientException(Http::describe($response, 'Mailpit ' . $what));
         }
     }
 
-    /** @throws TransientException */
+    /**
+     * @return array<mixed>|null
+     * @throws TransientException
+     */
+    private function getJson(string $path): ?array
+    {
+        $body = $this->get($path);
+        if ($body === null) {
+            return null;
+        }
+
+        $data = json_decode($body, true);
+        if (!is_array($data)) {
+            throw new TransientException('Mailpit ' . $path . ' : réponse JSON invalide');
+        }
+
+        return $data;
+    }
+
+    /**
+     * @return string|null null si le message (ou la pièce) n'existe plus
+     * @throws TransientException
+     */
     private function get(string $path, int $maxSize = 0): ?string
     {
         $response = Http::request(
@@ -84,17 +156,9 @@ final readonly class MailpitClient
             return null;
         }
         if ($response['status'] !== 200) {
-            throw new TransientException(self::describe($response, 'Mailpit ' . $path));
+            throw new TransientException(Http::describe($response, 'Mailpit ' . strtok($path, '?')));
         }
 
         return $response['body'];
-    }
-
-    /** @param array{status: int, body: string, error: ?string} $response */
-    private static function describe(array $response, string $what): string
-    {
-        return $response['status'] === 0
-            ? sprintf('%s : %s', $what, $response['error'])
-            : sprintf('%s : HTTP %d %s', $what, $response['status'], mb_substr(trim($response['body']), 0, 200));
     }
 }

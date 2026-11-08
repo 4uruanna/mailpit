@@ -24,6 +24,10 @@ RedirectMatch 404 (^|/)(vendor|src|sql|var)(/|$)
 <IfModule mod_rewrite.c>
     RewriteEngine On
 
+    # Transmet l'en-tête « Authorization: Bearer … » du relais à PHP (voir public/.htaccess).
+    RewriteCond %{HTTP:Authorization} .
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
     # Seul public/ est servi : la requête /hook/mailpit est traitée par public/index.php.
     RewriteRule ^$ public/ [L]
     RewriteRule ^(.*)$ public/$1 [L]

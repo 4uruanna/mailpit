@@ -6,81 +6,40 @@ namespace Relay;
 
 /**
  * Récepteur HTTP (serveur intégré de PHP) :
- *   POST /hook    webhook de Mailpit → le mail est mis en file d'attente (réponse immédiate)
- *   GET  /health  état du relais
+ *   POST /hook    webhook de Mailpit : réveille le worker, qui cherche aussitôt les nouveaux mails
+ *   GET  /health  état du récepteur
  *
- * Le travail lent (lecture du mail, envoi à l'API) est fait par le worker,
- * pour répondre à Mailpit bien avant son délai de 5 secondes.
+ * Le contenu du webhook n'est ni lu ni enregistré : c'est un simple signal. Le worker relit
+ * tout dans Mailpit. Un faux appel ne peut donc rien injecter, il déclenche juste une recherche.
+ * Sans webhook (relais arrêté, appel perdu…), le worker cherche de toute façon toutes les
+ * RELAY_POLL_INTERVAL secondes.
  */
-final readonly class Receiver
+final class Receiver
 {
-    private const int MAX_WEBHOOK_SIZE = 1024 * 1024;
+    /** Variable d'environnement qui donne le PID du worker (définie par bin/relay.php). */
+    public const string WORKER_PID_ENV = 'RELAY_WORKER_PID';
 
-    public function __construct(private Spool $spool)
-    {
-    }
-
-    public function handle(): void
+    public static function handle(): void
     {
         $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
         $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
 
         match (true) {
-            $path === '/hook' && $method === 'POST' => $this->hook(),
-            $path === '/health' && $method === 'GET' => self::json(200, ['status' => 'ok'] + $this->spool->stats()),
+            $path === '/hook' && $method === 'POST' => self::hook(),
+            $path === '/health' && $method === 'GET' => self::json(200, ['status' => 'ok']),
             $path === '/hook', $path === '/health' => self::json(405, ['error' => 'Method Not Allowed']),
             default => self::json(404, ['error' => 'Not Found']),
         };
     }
 
-    private function hook(): void
+    private static function hook(): void
     {
-        $contentType = strtolower(trim(explode(';', $_SERVER['CONTENT_TYPE'] ?? '')[0]));
-        if ($contentType !== 'application/json') {
-            self::json(415, ['error' => 'Content-Type application/json attendu']);
-
-            return;
+        $pid = (int) getenv(self::WORKER_PID_ENV);
+        if ($pid > 0 && function_exists('posix_kill')) {
+            posix_kill($pid, defined('SIGUSR1') ? SIGUSR1 : 10);
         }
 
-        $raw = (string) file_get_contents('php://input', false, null, 0, self::MAX_WEBHOOK_SIZE + 1);
-        if (strlen($raw) > self::MAX_WEBHOOK_SIZE) {
-            self::json(413, ['error' => 'corps de requête trop volumineux']);
-
-            return;
-        }
-
-        $summary = json_decode($raw, true);
-        if (!is_array($summary) || array_is_list($summary)) {
-            self::json(400, ['error' => 'objet JSON attendu']);
-
-            return;
-        }
-
-        $id = $summary['ID'] ?? null;
-        if (!is_string($id) || !preg_match(Spool::ID_PATTERN, $id)) {
-            self::json(422, ['error' => 'champ « ID » manquant ou invalide']);
-
-            return;
-        }
-
-        if ($this->spool->isQueued($id)) {
-            self::json(202, ['status' => 'already-queued', 'id' => $id]);
-
-            return;
-        }
-
-        $label = trim((string) ($_SERVER['HTTP_MAILPIT_LABEL'] ?? ''));
-        $this->spool->add([
-            'id'          => $id,
-            'label'       => $label === '' ? null : $label,
-            'summary'     => $summary,
-            'attempts'    => 0,
-            'received_at' => gmdate('c'),
-            'last_error'  => null,
-        ], time());
-
-        Log::info(sprintf('mail %s reçu : %s', $id, mb_substr((string) ($summary['Subject'] ?? ''), 0, 80)));
-        self::json(202, ['status' => 'queued', 'id' => $id]);
+        self::json(202, ['status' => 'accepted']);
     }
 
     /** @param array<string, mixed> $data */

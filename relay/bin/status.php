@@ -3,36 +3,38 @@
 declare(strict_types=1);
 
 /*
- * État de la file d'attente.
+ * Mails en attente de relais et mails refusés par l'API, lus dans Mailpit (le relais n'enregistre rien).
  *   sudo podman exec mailpit-relay php /app/bin/status.php
  */
 
 use Relay\Config;
-use Relay\Spool;
+use Relay\MailpitClient;
 
 require __DIR__ . '/../src/bootstrap.php';
 
-$dir = Config::fromEnv()->dataDir;
-$stats = (new Spool($dir))->stats();
+$config = Config::fromEnv();
+$mailpit = new MailpitClient($config);
 
-printf("En attente : %d\nAbandonnés : %d\n", $stats['queued'], $stats['failed']);
+$sections = [
+    'En attente (pas encore enregistrés par l\'API)' => $config->pendingQuery(),
+    sprintf('Refusés par l\'API (tag « %s »)', $config->tagFailed) => 'tag:' . $config->tagFailed,
+];
 
-foreach (['queue' => 'En attente', 'failed' => 'Abandonnés'] as $sub => $title) {
-    $files = glob($dir . '/' . $sub . '/*.json') ?: [];
-    if ($files === []) {
-        continue;
-    }
-    echo "\n$title :\n";
-    foreach (array_slice($files, 0, 20) as $file) {
-        $job = json_decode((string) file_get_contents($file), true) ?: [];
+foreach ($sections as $title => $query) {
+    $result = $mailpit->search($query, 20);
+    printf("%s : %d\n", $title, $result['total']);
+    foreach ($result['messages'] as $message) {
         printf(
-            "  %s  essais=%d  %s\n",
-            $job['id'] ?? basename($file),
-            $job['attempts'] ?? 0,
-            $job['last_error'] ?? '',
+            "  %s  %s  %s\n",
+            $message['ID'] ?? '?',
+            substr((string) ($message['Created'] ?? ''), 0, 19),
+            mb_substr((string) ($message['Subject'] ?? ''), 0, 60),
         );
     }
-    if (count($files) > 20) {
-        printf("  … et %d autre(s)\n", count($files) - 20);
+    if ($result['total'] > count($result['messages'])) {
+        printf("  … et %d autre(s)\n", $result['total'] - count($result['messages']));
     }
+    echo "\n";
 }
+
+echo "Le détail des erreurs est dans les logs : journalctl -u mailpit-relay\n";

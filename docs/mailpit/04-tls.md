@@ -184,6 +184,12 @@ sudo certbot renew --dry-run
 systemctl list-timers | grep certbot     # certbot-renew.timer
 ```
 
+**Depuis l'extérieur** : les tests ci-dessus se font en local. Pour vérifier ce que voient vraiment les expéditeurs (à travers la box ou le pare-feu), utilisez **https://www.checktls.com/TestReceiver** avec une adresse comme `essai@test.mondomaine.fr`. Le rapport doit afficher `SSL/TLS is working correctly on this server`.
+
+> ℹ️ Ne vous fiez pas à l'en-tête `Received:` ajouté par Mailpit (il indique `with SMTP` et ne précise pas si la connexion était chiffrée), ni à la ligne « Sécurité » des détails d'un mail envoyé depuis Gmail, qui ne s'affiche pas toujours.
+>
+> Pour voir **à coup sûr** si un expéditeur utilise STARTTLS, observez l'échange pendant un envoi : `sudo tcpdump -l -i any -nn -A 'tcp port 25' 2>/dev/null | grep -aE 'EHLO|STARTTLS|MAIL FROM'` (paquet `tcpdump`). Si vous voyez `STARTTLS` puis plus aucune commande lisible, la connexion est chiffrée. Si vous voyez `MAIL FROM` en clair, elle ne l'est pas.
+
 ---
 
 ## Dépannage TLS
@@ -195,6 +201,7 @@ systemctl list-timers | grep certbot     # certbot-renew.timer
 | Certbot : « Incorrect TXT record » / « No TXT record found » | Le TXT n'était pas encore publié : relancez avec `--dns-ovh-propagation-seconds 120` |
 | `certbot renew` échoue des mois plus tard | Jeton OVH expiré ou révoqué : recréez-le avec une validité illimitée et mettez à jour `ovh.ini` |
 | Mailpit ne redémarre plus après l'étape 4 | `sudo journalctl -u mailpit -n 50`. Vérifiez que `/etc/mailpit/certs/` contient bien les deux fichiers et que la ligne `Volume=` est dans `[Container]` |
+| Test local OK mais checktls ne voit pas STARTTLS | Un équipement entre Internet et le serveur filtre le SMTP (option « protection SMTP » / SMTP ALG de certaines box ou routeurs) : désactivez-la |
 | `Verify return code` différent de 0 | Vous avez mis `cert.pem` au lieu de `fullchain.pem`, ou ce n'est pas le bon certificat |
 | Relancer la copie à la main (après un changement de config, par ex.) | `sudo RENEWED_LINEAGE=/etc/letsencrypt/live/mail.mondomaine.fr /usr/local/bin/mailpit-cert-deploy.sh` |
 

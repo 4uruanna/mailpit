@@ -22,20 +22,33 @@
 <?php /* Rechargement chaque minute, marqué ?auto=1 : il ne prolonge pas la session (DashboardMiddleware). */ ?>
 <meta http-equiv="refresh" content="60; url=<?= $e($url('/v1/app/status?auto=1')) ?>">
 <?php endif; ?>
-<script src="<?= $e($url('/v1/app/dashboard.js')) ?>" defer></script>
+<?php /* Sans « defer » : le thème choisi (clair ou sombre) est appliqué avant le premier affichage. */ ?>
+<script src="<?= $e($url('/v1/app/dashboard.js')) ?>"></script>
 <title><?= $e(($title !== null ? $title . ' · ' : '') . 'Amnesic Mail') ?></title>
 <style>
+/* Thème : celui du système par défaut ; <html data-theme="light|dark"> si choisi avec le bouton du header (dashboard.js). */
 :root {
+    color-scheme: light;
     --bg: #f6f7f9; --surface: #fff; --text: #1d2330; --muted: #667085; --border: #e3e6eb;
     --accent: #2f6fde; --accent-text: #fff; --danger: #c43d3d; --ok-bg: #e8f5ec; --ok-text: #1e6b3a;
     --err-bg: #fdecec; --err-text: #9b2c2c; --code-bg: #f0f2f5; --warn-bg: #fff4e0; --warn-text: #8a4b00;
+    --icon-moon: block; --icon-sun: none;
 }
 @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme="light"]) {
+        color-scheme: dark;
         --bg: #12151b; --surface: #1b1f27; --text: #e6e9ef; --muted: #98a1b2; --border: #2c323d;
         --accent: #5b8ff0; --accent-text: #0b1020; --danger: #ef6b6b; --ok-bg: #173323; --ok-text: #8fdcaa;
         --err-bg: #3a1d1d; --err-text: #f4a9a9; --code-bg: #232833; --warn-bg: #3a2a12; --warn-text: #f5c97a;
+        --icon-moon: none; --icon-sun: block;
     }
+}
+:root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #12151b; --surface: #1b1f27; --text: #e6e9ef; --muted: #98a1b2; --border: #2c323d;
+    --accent: #5b8ff0; --accent-text: #0b1020; --danger: #ef6b6b; --ok-bg: #173323; --ok-text: #8fdcaa;
+    --err-bg: #3a1d1d; --err-text: #f4a9a9; --code-bg: #232833; --warn-bg: #3a2a12; --warn-text: #f5c97a;
+    --icon-moon: none; --icon-sun: block;
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
@@ -48,6 +61,11 @@ header nav { display: flex; gap: 4px; flex: 1; }
 header nav a { padding: 6px 12px; border-radius: 6px; color: var(--muted); }
 header nav a.active { background: var(--code-bg); color: var(--text); }
 header .user { display: flex; align-items: center; gap: 12px; color: var(--muted); }
+button.theme-toggle { display: inline-flex; padding: 5px; border-color: var(--border); background: none; color: var(--muted); font-weight: normal; }
+button.theme-toggle:hover { color: var(--text); border-color: var(--muted); }
+button.theme-toggle svg { width: 18px; height: 18px; }
+button.theme-toggle .moon { display: var(--icon-moon); }
+button.theme-toggle .sun { display: var(--icon-sun); }
 main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 48px; }
 h1 { font-size: 22px; margin: 0 0 16px; }
 h2 { font-size: 17px; margin: 28px 0 12px; }
@@ -168,6 +186,16 @@ svg.chart .unknown, .swatch.unknown { fill: var(--muted); background: var(--mute
             <a href="<?= $e($url('/v1/app/status')) ?>" class="<?= $page === 'status' ? 'active' : '' ?>">Statut</a>
         </nav>
         <div class="user">
+            <?php /* Bascule clair / sombre (dashboard.js) : la lune en thème clair, le soleil en thème sombre. */ ?>
+            <button type="button" class="theme-toggle" data-theme-toggle aria-label="Mode sombre" aria-pressed="false" title="Passer en mode sombre">
+                <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                    <path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>
+                </svg>
+                <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                    <circle cx="12" cy="12" r="4"/>
+                    <path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/>
+                </svg>
+            </button>
             <span><?= $e($admin) ?></span>
             <form class="inline" method="post" action="<?= $e($url('/v1/app/signout')) ?>">
                 <input type="hidden" name="_csrf" value="<?= $e($csrf) ?>">

@@ -92,7 +92,7 @@ final class ErrorPageTest extends TestCase
         self::assertSame(SecurityHeaders::HEADERS['Content-Security-Policy'], $response->getHeaderLine('Content-Security-Policy'));
         $body = (string) $response->getBody();
         self::assertStringContainsString('<title>Erreur interne · Amnesic Mail</title>', $body);
-        self::assertStringContainsString('<script src="/v1/app/dashboard.js" defer></script>', $body);
+        self::assertStringContainsString('<script src="/v1/app/dashboard.js"></script>', $body);
         self::assertStringNotContainsString('détail-confidentiel', $body);
         self::assertStringNotContainsString('Déconnexion', $body);
         self::assertNotSame(PHP_SESSION_ACTIVE, session_status());

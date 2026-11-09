@@ -6,6 +6,7 @@ namespace App\Middleware;
 
 use App\Dashboard\Session;
 use App\Dashboard\View;
+use App\Http\HttpsDetector;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\MiddlewareInterface;
@@ -13,7 +14,8 @@ use Psr\Http\Server\RequestHandlerInterface;
 
 /**
  * Commun à toutes les pages du Dashboard (/v1/app) :
- *  - démarre la session (cookie Secure si la page est en HTTPS) ;
+ *  - démarre la session (cookie Secure si la page est en HTTPS, même détection que
+ *    ForceHttpsMiddleware : derrière un proxy de confiance, X-Forwarded-Proto) ;
  *  - refuse tout formulaire POST sans le bon jeton anti-CSRF (champ « _csrf ») ;
  *  - ajoute les en-têtes de sécurité (pas de cache, pas d'iframe, seul le script dashboard.js),
  *    sauf ceux que la page a déjà fixés.
@@ -23,12 +25,13 @@ final readonly class DashboardMiddleware implements MiddlewareInterface
     public function __construct(
         private Session $session,
         private View $view,
+        private HttpsDetector $https,
     ) {
     }
 
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
-        $this->session->start($request->getUri()->getScheme() === 'https');
+        $this->session->start($this->https->isHttps($request));
 
         $response = null;
         if ($request->getMethod() === 'POST') {

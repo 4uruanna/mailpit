@@ -16,6 +16,12 @@ return [
     // Laisser vide pour https://api.amnesic.dev/v1/messages
     'base_path' => '',
 
+    // HTTPS obligatoire : une page demandée en http:// est redirigée vers https:// (301), toute
+    // autre requête en clair (POST, DELETE…) est refusée (403), et les réponses HTTPS portent
+    // l'en-tête Strict-Transport-Security (un an). Activez le certificat SSL de l'hébergement AVANT.
+    // false UNIQUEMENT pour un essai en local sans HTTPS (php -S, http://localhost…).
+    'force_https' => true,
+
     // Fichier de log (erreurs PHP, requêtes refusées). null = log par défaut de l'hébergement.
     'log_file' => __DIR__ . '/var/log/api.log',
 
@@ -82,6 +88,9 @@ return [
     // Si un proxy / CDN est placé devant l'API, listez ses IP (ou plages CIDR) :
     // l'IP du client sera alors lue dans l'en-tête indiqué, uniquement pour les
     // requêtes qui viennent de ces proxys.
+    // De même, X-Forwarded-Proto (http ou https, pour 'force_https') n'est lu que pour eux.
+    // ⚠️ Un proxy qui joint l'hébergement en http:// doit être listé ici, sinon chaque page
+    //    est redirigée vers https:// à l'infini.
     'proxy' => [
         'trusted_proxies' => [],
         'header'          => 'X-Forwarded-For',

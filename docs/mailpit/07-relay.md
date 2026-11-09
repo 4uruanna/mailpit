@@ -143,7 +143,7 @@ sudo nano /etc/mailpit/relay.env
 Contenu (modèle complet : [`relay/relay.env.example`](../../relay/relay.env.example)) :
 
 ```ini
-# Adresse de base de l'API (sans « /v1/messages » ni « ?token=… »)
+# Adresse de base de l'API, en https:// (sans « /v1/messages » ni « ?token=… »)
 RELAY_API_URL=https://api.mondomaine.fr
 
 # Le jeton de l'API : EXACTEMENT la valeur de webhook.token dans son config.php
@@ -326,6 +326,7 @@ Un arrêt du relais ne fait perdre **aucun** mail, même ceux arrivés pendant l
 | Relais : `Mailpit /api/v1/message/… : HTTP 401` | `RELAY_MAILPIT_AUTH` ne correspond pas à `MP_UI_AUTH` |
 | Relais : `Could not resolve host: mailpit` | Mailpit n'est pas sur le réseau `mailpit` (étape 4), ou son conteneur ne s'appelle pas `mailpit` |
 | Relais : `un autre relais tourne déjà dans ce conteneur` | Vous avez lancé `bin/relay.php` à la main dans le conteneur : inutile, le relais tourne déjà. Les scripts `status.php` et `retry-failed.php`, eux, peuvent être lancés à tout moment |
+| Relais : `configuration invalide : RELAY_API_URL doit commencer par https://` | Le relais refuse d'envoyer le jeton et les mails en clair : mettez `https://` dans `RELAY_API_URL`. Si le certificat de l'API n'est pas encore prêt, attendez-le plutôt que de passer en `http://` (l'API refuserait de toute façon, `403`) |
 | Relais : `configuration invalide : RELAY_API_TOKEN manquant ou trop court` | Mettez dans `RELAY_API_TOKEN` la valeur de `webhook.token` (32 caractères minimum) |
 | Relais : `HTTP 404` ou `HTTP 405` | `RELAY_API_URL` contient un chemin en trop (elle doit s'arrêter au domaine, sans `/v1/messages`), ou mauvais dossier racine du multisite côté OVH |
 | Relais : `HTTP 401` | Jeton différent entre `RELAY_API_TOKEN` et `webhook.token` de l'API, ou `.htaccess` de l'API pas à jour (l'en-tête `Authorization` n'arrive pas à PHP). Le relais réessaie : corrigez, il n'y a rien à relancer |

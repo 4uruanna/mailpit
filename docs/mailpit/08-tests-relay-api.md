@@ -100,7 +100,7 @@ Ce jeton servira à nouveau en phase 2 et en phase 3. Conservez-le dans un gesti
 
 1. **phpMyAdmin** → onglet **Importer** → `sql/schema.sql`. Les tables `mailpit_messages` et `mailpit_parts` doivent apparaître.
 2. **FTP** : envoyez tout le contenu de `api/` dans un dossier `api` à la racine de l'hébergement, **fichiers cachés compris** (`.htaccess`, `public/.htaccess`, `var/.htaccess`, `.ovhconfig`), ainsi que `vendor/` et `config.php`.
-3. **Multisite** : ajoutez `api.mondomaine.fr`, avec `api/public` comme dossier racine, et cochez **SSL**.
+3. **Multisite** : ajoutez `api.mondomaine.fr`, avec `api/public` comme dossier racine, et cochez **SSL**. L'API impose HTTPS : attendez que la colonne **SSL** indique **Activé** avant l'étape 1.3.
 4. **Version de PHP** : avec `api/public` comme dossier racine, déplacez `.ovhconfig` dans `api/public/`. Vérifiez ensuite la version active dans l'onglet **Informations générales** (8.4 minimum).
 
 ### Étape 1.3 — 💻 Ordinateur : l'API répond, et refuse les inconnus
@@ -136,6 +136,32 @@ done
 ✅ Attendu : `403` ou `404` sur chaque ligne. **Aucun `200`.**
 
 ❌ Un `200` : le fichier est lisible depuis Internet. Vérifiez que les `.htaccess` sont bien sur l'hébergement, et que le dossier racine du multisite est `api/public` (ou `api`, mais jamais le dossier qui contient l'hébergement entier).
+
+### Étape 1.5 — 💻 Ordinateur : HTTPS obligatoire
+
+```bash
+# Une page en http:// est redirigée vers https://
+curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' http://api.mondomaine.fr/v1/app/signin
+# Un POST en http:// est refusé
+curl -s -w '\n%{http_code}\n' -X POST http://api.mondomaine.fr/v1/messages
+# En HTTPS, le navigateur est prié de ne plus jamais utiliser http://
+curl -s -D - -o /dev/null https://api.mondomaine.fr/v1/app/signin | grep -i strict-transport
+```
+
+✅ Attendu :
+
+```
+301 https://api.mondomaine.fr/v1/app/signin
+{"error":"HTTPS obligatoire : renvoyez la requête en https://"}
+403
+strict-transport-security: max-age=31536000
+```
+
+| Résultat | Signification |
+|---|---|
+| `200` au lieu de `301` | `.htaccess` pas à jour, et API pas à jour non plus (sinon PHP redirigerait) : renvoyez les fichiers en FTP. Vérifiez aussi que `force_https` n'est pas à `false` dans `config.php` |
+| `301` en boucle dans un navigateur (« Trop de redirections ») | Un proxy ou un CDN est placé devant l'hébergement : voir [Derrière un proxy ou un CDN](../../api/README.md#derrière-un-proxy-ou-un-cdn) |
+| Pas de ligne `strict-transport-security` | `.htaccess` ou API pas à jour |
 
 ---
 
@@ -540,8 +566,8 @@ sudo journalctl -u mailpit-relay -n 5 --no-pager
    DELETE FROM mailpit_messages WHERE created_at >= 'AAAA-MM-JJ HH:MM:SS';
    ```
    Les pièces (`mailpit_parts`) partent avec leurs mails. Supprimez aussi par FTP les dossiers `var/messages/<ID>/` correspondants : la purge automatique ne les retire plus, puisque leurs lignes n'existent plus. La rétention à 1000 mails ferait de toute façon disparaître les tests, base **et** fichiers, si vous les laissez.
-5. ☁️ **`config.php`** : vérifiez `'debug' => false`.
-6. ☁️ **`var/log/api.log`** : relisez-le, puis videz-le. Il garde la trace des tests 401 et 403 (`[auth]`, `[ip-filter]`). Toute autre erreur (PHP, base de données, `[prune]`) est à examiner.
+5. ☁️ **`config.php`** : vérifiez `'debug' => false` et `'force_https' => true`.
+6. ☁️ **`var/log/api.log`** : relisez-le, puis videz-le. Il garde la trace des tests 401 et 403 (`[auth]`, `[ip-filter]`, `[https]`). Toute autre erreur (PHP, base de données, `[prune]`) est à examiner.
 7. Cochez les phases dans le [suivi](#suivi) en haut de page.
 
 ---

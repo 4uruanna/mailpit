@@ -54,6 +54,20 @@ final class ClientIpResolverTest extends TestCase
         self::assertSame('203.0.113.10', new ClientIpResolver(new IpMatcher(['10.0.0.1']), 'X-Real-IP')->resolve($request));
     }
 
+    public function testFromTrustedProxy(): void
+    {
+        $resolver = new ClientIpResolver(new IpMatcher(['10.0.0.0/8']));
+        $factory = new ServerRequestFactory();
+
+        self::assertTrue($resolver->fromTrustedProxy($factory->createServerRequest('GET', 'https://api.test/', ['REMOTE_ADDR' => '10.1.2.3'])));
+        self::assertFalse($resolver->fromTrustedProxy($factory->createServerRequest('GET', 'https://api.test/', ['REMOTE_ADDR' => '203.0.113.10'])));
+        // Seul REMOTE_ADDR compte : un X-Forwarded-For ne fait pas d'un client un proxy.
+        self::assertFalse($resolver->fromTrustedProxy(
+            $factory->createServerRequest('GET', 'https://api.test/', ['REMOTE_ADDR' => '203.0.113.10'])->withHeader('X-Forwarded-For', '10.0.0.1'),
+        ));
+        self::assertFalse($resolver->fromTrustedProxy($factory->createServerRequest('GET', 'https://api.test/')));
+    }
+
     public function testWithoutRemoteAddr(): void
     {
         $request = new ServerRequestFactory()->createServerRequest('GET', 'https://api.test/');

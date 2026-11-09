@@ -20,6 +20,7 @@ Mailpit ── webhook ──► relais : « il y a du nouveau » (le contenu du
 - **Les plus anciens d'abord.** Après un retard (API en panne, relais arrêté), les mails en attente sont relayés du plus ancien au plus récent, par lots de `RELAY_BATCH_SIZE` : ce sont les plus anciens que Mailpit supprime en premier (`MP_MAX_MESSAGES`, `MP_MAX_AGE`). Un mail qui attend son nouvel essai ne bloque pas les suivants.
 - **Le webhook n'est qu'un signal.** Il déclenche une recherche immédiate. Sans lui (webhook perdu, relais arrêté…), le relais cherche de toute façon toutes les `RELAY_POLL_INTERVAL` secondes. Un faux appel ne peut rien injecter : tout est relu dans Mailpit.
 - **Jeton configuré des deux côtés** : `RELAY_API_TOKEN` ici, `webhook.token` dans le `config.php` de l'API. Il voyage dans l'en-tête `Authorization`, jamais dans l'URL : l'API refuse un jeton passé en `?token=…` (il apparaîtrait dans les logs d'accès de l'hébergement). Le relais est donc le seul moyen d'alimenter l'API.
+- **HTTPS obligatoire** : `RELAY_API_URL` doit commencer par `https://`, sinon le relais refuse de démarrer. Le jeton et les mails ne circulent jamais en clair. `http://` n'est accepté que vers cette machine (`localhost`, `127.0.0.1`, `::1`), pour des tests. De son côté, l'API refuse toute requête `POST` en `http://` (`403`).
 - **Intégrité vérifiée.** Chaque pièce est envoyée avec son empreinte SHA-256, comparée à celle de Mailpit avant l'envoi, puis par l'API avant l'enregistrement.
 - **État « non lu » conservé** : lire un mail via l'API de Mailpit le marque comme lu, le relais le remet en « non lu ».
 - **Aucun port publié** : le relais n'est joignable que par les conteneurs du réseau Podman `mailpit`.
@@ -45,7 +46,7 @@ Variables d'environnement (voir `relay.env.example`) :
 
 | Variable | Défaut | Rôle |
 |---|---|---|
-| `RELAY_API_URL` | *(obligatoire)* | adresse de base de l'API (ex. `https://api.mondomaine.fr`), **sans** `/v1/messages` ni `?token=…` |
+| `RELAY_API_URL` | *(obligatoire)* | adresse de base de l'API (ex. `https://api.mondomaine.fr`), **sans** `/v1/messages` ni `?token=…`. En **`https://`** (`http://` seulement vers `localhost`, `127.0.0.1` ou `::1`) |
 | `RELAY_API_TOKEN` | *(obligatoire)* | jeton partagé avec l'API (`webhook.token`), 32 caractères minimum |
 | `RELAY_MAILPIT_URL` | `http://mailpit:8025` | Mailpit vu depuis le conteneur |
 | `RELAY_MAILPIT_AUTH` | *(aucun)* | identifiants `MP_UI_AUTH` au format `utilisateur:motdepasse` |
@@ -110,7 +111,7 @@ vendor/bin/phpunit
 
 | Fichier | Ce qui est testé |
 |---|---|
-| `tests/ConfigTest.php` | variables `RELAY_…` : valeurs par défaut, chaque erreur, `relay.env.example` |
+| `tests/ConfigTest.php` | variables `RELAY_…` : valeurs par défaut, chaque erreur (dont `RELAY_API_URL` en `http://` hors `localhost`), `relay.env.example` |
 | `tests/HttpTest.php` | client HTTP contre un petit serveur `php -S` : en-têtes, authentification, taille maximale, délai, redirection non suivie |
 | `tests/ReceiverTest.php` | récepteur (`public/index.php`) : `POST /hook`, `GET /health`, `405`, `404`, et le signal `SIGUSR1` qui réveille le worker |
 | `tests/WorkerTest.php` | le relais de bout en bout (voir ci-dessous) |

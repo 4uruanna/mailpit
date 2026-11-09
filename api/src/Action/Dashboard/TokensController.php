@@ -6,6 +6,7 @@ namespace App\Action\Dashboard;
 
 use App\Dashboard\Session;
 use App\Dashboard\View;
+use App\Http\HttpsDetector;
 use App\Mailpit\Address;
 use App\Persistence\MessageRepository;
 use App\Persistence\TokenRepository;
@@ -28,6 +29,7 @@ final readonly class TokensController
         private MessageRepository $messages,
         private Session $session,
         private View $view,
+        private HttpsDetector $https,
     ) {
     }
 
@@ -70,7 +72,7 @@ final readonly class TokensController
             'token'     => $token,
             'addresses' => $this->messages->countByAddress($addresses),
             'plain'     => is_array($newToken) && ($newToken['id'] ?? null) === $token['id'] ? (string) $newToken['token'] : null,
-            'origin'    => sprintf('%s://%s', $request->getUri()->getScheme(), $request->getUri()->getAuthority()),
+            'origin'    => $this->origin($request),
         ], title: $token['name']);
     }
 
@@ -112,6 +114,23 @@ final readonly class TokensController
         }
 
         return $token;
+    }
+
+    /**
+     * Début de l'URL de l'exemple curl. Même détection du HTTPS que force_https : derrière le
+     * frontal OVH (port 443 sans HTTPS=on) ou un proxy de confiance, l'URL vue par PHP est en
+     * http:// (avec « :443 ») alors que le client est en HTTPS. L'exemple ne doit jamais faire
+     * circuler le jeton en clair.
+     */
+    private function origin(ServerRequestInterface $request): string
+    {
+        $uri = $request->getUri();
+        if ($uri->getScheme() !== 'https' && $this->https->isHttps($request)) {
+            // Le port reçu est celui de l'hébergement, pas celui du client : on le retire.
+            return 'https://' . $uri->getHost();
+        }
+
+        return sprintf('%s://%s', $uri->getScheme(), $uri->getAuthority());
     }
 
     private function back(string $path, string $type, string $message): ResponseInterface

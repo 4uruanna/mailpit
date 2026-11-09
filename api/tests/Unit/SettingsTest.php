@@ -40,16 +40,18 @@ final class SettingsTest extends TestCase
         self::assertSame('X-Forwarded-For', $settings->proxyHeader);
         self::assertSame(7200, $settings->sessionLifetime);
         self::assertSame('Europe/Paris', $settings->timezone);
+        self::assertTrue($settings->forceHttps, 'HTTPS obligatoire par défaut');
     }
 
     public function testAllValues(): void
     {
         $settings = Settings::fromArray([
-            'debug'     => true,
-            'base_path' => '/api/',
-            'log_file'  => '/tmp/api.log',
-            'db'        => ['host' => 'db', 'port' => '3307', 'name' => 'n', 'user' => 'u', 'password' => 'p'],
-            'webhook'   => [
+            'debug'       => true,
+            'base_path'   => '/api/',
+            'force_https' => false,
+            'log_file'    => '/tmp/api.log',
+            'db'          => ['host' => 'db', 'port' => '3307', 'name' => 'n', 'user' => 'u', 'password' => 'p'],
+            'webhook'     => [
                 'allowed_ips'         => [' 203.0.113.10 ', '2001:db8::/64'],
                 'token'               => '  ' . self::TOKEN . "\n",
                 'max_body_size'       => 1000,
@@ -75,6 +77,7 @@ final class SettingsTest extends TestCase
         self::assertSame('X-Real-IP', $settings->proxyHeader);
         self::assertSame(60, $settings->sessionLifetime);
         self::assertSame('UTC', $settings->timezone);
+        self::assertFalse($settings->forceHttps);
     }
 
     public function testBasePathGetsLeadingSlash(): void
@@ -105,6 +108,8 @@ final class SettingsTest extends TestCase
         yield 'trusted_proxies pas une liste' => [['proxy' => ['trusted_proxies' => '10.0.0.1']] + $config, '« proxy.trusted_proxies » doit être une liste'];
         yield 'session trop courte'     => [['app' => ['session_lifetime' => 59]] + $config, '« app.session_lifetime »'];
         yield 'session en texte'        => [['app' => ['session_lifetime' => '7200']] + $config, '« app.session_lifetime »'];
+        yield 'force_https en texte'    => [['force_https' => 'false'] + $config, '« force_https » doit valoir true ou false'];
+        yield 'force_https à 0'         => [['force_https' => 0] + $config, '« force_https » doit valoir true ou false'];
         yield 'fuseau inconnu'          => [['app' => ['timezone' => 'Mars/Olympus']] + $config, '« app.timezone » : fuseau horaire inconnu « Mars/Olympus »'];
     }
 
@@ -125,5 +130,6 @@ final class SettingsTest extends TestCase
 
         self::assertSame(['203.0.113.10'], $settings->allowedIps);
         self::assertSame(1000, $settings->maxMessages);
+        self::assertTrue($settings->forceHttps);
     }
 }

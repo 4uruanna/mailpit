@@ -88,7 +88,7 @@ cp config.example.php config.php
 | Clé | Valeur |
 |---|---|
 | `db.host`, `db.name`, `db.user`, `db.password` | Espace client OVH → **Hébergements** → votre hébergement → onglet **Bases de données** |
-| `webhook.allowed_ips` | l'IPv4 **et** l'IPv6 du serveur Mailpit (voir ci-dessous) |
+| `webhook.allowed_ips` | l'IPv4 du serveur Mailpit, et son IPv6 seulement si elle est stable (voir ci-dessous) |
 | `webhook.token` | **obligatoire** : le secret partagé avec le relais, généré avec `openssl rand -hex 32` (32 caractères minimum). La même valeur va dans `RELAY_API_TOKEN` côté relais |
 | `webhook.max_attachment_size` | taille maximale d'une pièce jointe, 5 Mo par défaut |
 | `webhook.max_messages` | nombre de mails gardés, 1000 par défaut (comme `MP_MAX_MESSAGES` côté Mailpit). `0` = sans limite |
@@ -110,7 +110,11 @@ curl -4 -s https://ifconfig.me; echo
 curl -6 -s https://ifconfig.me; echo
 ```
 
-> ⚠️ **N'oubliez pas l'IPv6.** L'hébergement OVH répond aussi en IPv6. Si le serveur Mailpit en a une, c'est elle qu'il utilisera en priorité pour appeler l'API, et l'IPv4 seule ne suffira pas. Vous pouvez mettre l'adresse exacte ou sa plage `/64`.
+> ⚠️ **IPv4 ou IPv6 ?** L'hébergement OVH répond aussi en IPv6. Le relais appelle l'API depuis son conteneur, et le réseau Podman n'utilise que l'**IPv4** : c'est donc l'IPv4 du serveur que l'API verra. Elle suffit dans `allowed_ips`.
+>
+> N'y mettez **pas** l'IPv6 affichée par `curl -6`. C'est souvent une **adresse temporaire**, que Linux renouvelle régulièrement (« privacy extensions ») : elle ne serait plus valable le lendemain. Si vous voulez autoriser l'IPv6, mettez la plage `/64` du réseau, par exemple `2001:db8:1:2::/64`.
+>
+> Conséquence pour les tests manuels depuis le serveur : forcez l'IPv4 avec **`curl -4`**, sinon `curl` passe par l'IPv6 et reçoit un `403`.
 
 ### 2. Créer les tables
 
@@ -166,10 +170,10 @@ sudo systemctl restart mailpit
 
 ## Tester
 
-**Depuis le serveur Mailpit** (le seul autorisé), un appel manuel :
+**Depuis le serveur Mailpit** (le seul autorisé), un appel manuel. Pour une recette complète, pas à pas, voir la [Partie 8 du tutoriel](../docs/mailpit/08-tests-relay-api.md) :
 
 ```bash
-curl -i -X POST 'https://api.amnesic.dev/v1/messages' \
+curl -4 -i -X POST 'https://api.amnesic.dev/v1/messages' \
   -H 'Authorization: Bearer LE_JETON_DE_CONFIG_PHP' \
   -H 'Content-Type: application/json' \
   -d '{"ID":"test-manuel-1","Created":"2026-01-01T12:00:00Z","Subject":"Test manuel","From":{"Name":"","Address":"moi@exemple.fr"},"To":[],"Parts":[{"PartID":"2","Kind":"attachment","FileName":"test.txt","ContentType":"text/plain","ContentID":"","Size":5}]}'
@@ -182,7 +186,7 @@ printf 'hello' > /tmp/test.txt
 ```
 
 ```bash
-curl -i -X POST 'https://api.amnesic.dev/v1/messages/test-manuel-1/part/2' \
+curl -4 -i -X POST 'https://api.amnesic.dev/v1/messages/test-manuel-1/part/2' \
   -H 'Authorization: Bearer LE_JETON_DE_CONFIG_PHP' \
   -H 'Content-Type: application/octet-stream' \
   -H "X-Content-SHA256: $(sha256sum /tmp/test.txt | cut -d' ' -f1)" \
@@ -194,7 +198,7 @@ Réponse attendue : `HTTP/2 201` et `"complete":true`. Le fichier est dans `var/
 Puis la liste :
 
 ```bash
-curl -s 'https://api.amnesic.dev/v1/messages' -H 'Authorization: Bearer LE_JETON_DE_CONFIG_PHP'
+curl -4 -s 'https://api.amnesic.dev/v1/messages' -H 'Authorization: Bearer LE_JETON_DE_CONFIG_PHP'
 ```
 
 **Pièce jointe de 5 Mo** : l'hébergement doit accepter des requêtes `POST` de cette taille (réglage PHP `post_max_size`, plus élevé que 5 Mo sur les hébergements OVH). Pour vérifier, recommencez le test ci-dessus avec un fichier de 5 Mo (`head -c 5242880 /dev/urandom > /tmp/test.txt`) et `"Size":5242880` dans le `POST`.
@@ -217,7 +221,7 @@ Le message doit apparaître dans la table `mailpit_messages`.
 
 | Symptôme | Cause probable / solution |
 |---|---|
-| `403` depuis le serveur Mailpit | L'IP vue par l'API n'est pas dans `allowed_ips`. Elle est écrite dans `var/log/api.log` (`[ip-filter] requête refusée depuis « … »`) : ajoutez-la. C'est souvent l'IPv6 |
+| `403` depuis le serveur Mailpit | L'IP vue par l'API n'est pas dans `allowed_ips`. Elle est écrite dans `var/log/api.log` (`[ip-filter] requête refusée depuis « … »`) : ajoutez-la. C'est souvent l'IPv6 : un `curl` lancé sans `-4` |
 | `401` | Jeton absent ou différent de `webhook.token` (`[auth] jeton absent` ou `[auth] jeton invalide` dans `var/log/api.log`). Vérifiez `RELAY_API_TOKEN` (relais) ou `MP_WEBHOOK_URL` (webhook direct) |
 | `401` avec `jeton absent` alors que le relais envoie bien le jeton | L'en-tête `Authorization` n'arrive pas jusqu'à PHP : vérifiez que les `.htaccess` (racine et `public/`) ont bien été envoyés, à jour |
 | `500` avec `{"error":"Erreur de configuration du serveur"}` | `vendor/` ou `config.php` absent, ou `config.php` invalide (détail dans `var/log/api.log`). Souvent : `webhook.token` vide ou trop court (**obligatoire**, 32 caractères minimum) |
@@ -276,7 +280,7 @@ Comme les autres routes, elle exige le jeton et n'est accessible que depuis les 
 Avec la rétention par défaut (1000 mails), un seul appel renvoie **tous** les mails.
 
 ```bash
-curl -s 'https://api.amnesic.dev/v1/messages?limit=50&offset=0' -H 'Authorization: Bearer LE_JETON_DE_CONFIG_PHP'
+curl -4 -s 'https://api.amnesic.dev/v1/messages?limit=50&offset=0' -H 'Authorization: Bearer LE_JETON_DE_CONFIG_PHP'
 ```
 
 ```json

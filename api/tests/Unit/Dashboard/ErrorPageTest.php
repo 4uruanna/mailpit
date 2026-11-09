@@ -91,7 +91,7 @@ final class ErrorPageTest extends TestCase
         self::assertSame(500, $response->getStatusCode());
         self::assertSame(SecurityHeaders::HEADERS['Content-Security-Policy'], $response->getHeaderLine('Content-Security-Policy'));
         $body = (string) $response->getBody();
-        self::assertStringContainsString('<title>Erreur interne · Mailpit Dashboard</title>', $body);
+        self::assertStringContainsString('<title>Erreur interne · Amnesic Mail</title>', $body);
         self::assertStringContainsString('<script src="/v1/app/dashboard.js" defer></script>', $body);
         self::assertStringNotContainsString('détail-confidentiel', $body);
         self::assertStringNotContainsString('Déconnexion', $body);

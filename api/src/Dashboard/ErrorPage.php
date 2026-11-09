@@ -162,7 +162,7 @@ final readonly class ErrorPage
         $e = static fn (string $value): string => htmlspecialchars($value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 
         $html = sprintf(
-            "<!doctype html>\n<html lang=\"fr\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"robots\" content=\"noindex, nofollow\">\n<title>%s · Mailpit Dashboard</title>\n</head>\n<body>\n<h1>%s</h1>\n<p>%s</p>\n%s<p><a href=\"%s\">Retour aux mails</a></p>\n</body>\n</html>\n",
+            "<!doctype html>\n<html lang=\"fr\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"robots\" content=\"noindex, nofollow\">\n<title>%s · Amnesic Mail</title>\n</head>\n<body>\n<h1>%s</h1>\n<p>%s</p>\n%s<p><a href=\"%s\">Retour aux mails</a></p>\n</body>\n</html>\n",
             $e($title),
             $e($title),
             $e($message),

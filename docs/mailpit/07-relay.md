@@ -44,6 +44,28 @@ sudo apt install -y git aardvark-dns
 
 `aardvark-dns` permet aux conteneurs d'un même réseau Podman de se joindre **par leur nom** (`mailpit`, `mailpit-relay`). Il est souvent déjà installé avec Podman.
 
+### Si ufw est actif : laisser sortir les conteneurs
+
+Vérifiez avec `sudo ufw status verbose`. Si la ligne `Default:` contient **`deny (routed)`** (le réglage par défaut d'ufw), tout ce qui **sort** d'un conteneur est bloqué : le trafic d'un conteneur traverse le serveur, il est donc « routé ». Sans règle, la construction de l'image échoue à l'étape 3 (`DNS: transient error`, puis `unable to select packages`), et le relais ne pourrait pas joindre l'API.
+
+```bash
+# Conteneurs du réseau par défaut (dont la construction de l'image, étape 3)
+sudo ufw route allow from 10.88.0.0/16 comment 'Podman : sortie des conteneurs (reseau par defaut)'
+
+# Conteneurs du réseau « mailpit » (étape 4) : Mailpit et le relais
+sudo ufw route allow from 10.89.25.0/24 comment 'Podman : sortie du reseau mailpit'
+```
+
+Ces règles laissent les conteneurs sortir et recevoir les réponses. Elles n'ouvrent **aucun** port depuis l'extérieur.
+
+Pour vérifier depuis un conteneur jetable :
+
+```bash
+sudo podman run --rm docker.io/library/alpine:latest sh -c 'nslookup dl-cdn.alpinelinux.org && wget -T 5 -q -O /dev/null http://1.1.1.1 && echo OK'
+```
+
+Attendu : des lignes `Address: …`, puis `OK`.
+
 ## Étape 2 — Récupérer le code du relais
 
 ```bash
@@ -84,6 +106,8 @@ Description=Réseau privé de Mailpit et de son relais
 
 [Network]
 NetworkName=mailpit
+# Plage fixe : les règles ufw (étapes 1 et 4) peuvent la viser précisément
+Subnet=10.89.25.0/24
 ```
 
 Ajoutez ensuite ce réseau à Mailpit. Dans `/etc/containers/systemd/mailpit.container` ([Partie 1, étape 4](01-podman.md#étape-4--créer-le-service-systemd-quadlet)), ajoutez cette ligne dans la section `[Container]`, par exemple sous `Volume=mailpit-data:/data` :
@@ -93,6 +117,14 @@ Network=mailpit.network
 ```
 
 Les `PublishPort` ne changent pas : le port 25 reste ouvert sur Internet, et l'interface reste sur `127.0.0.1:8025`.
+
+> ⚠️ **Avec ufw**, Mailpit change de sous-réseau : il passe de `10.88.0.0/16` à `10.89.25.0/24`. La règle `ufw route` de la [Partie 1, étape 6](01-podman.md#étape-6--ouvrir-le-port-25-dans-le-pare-feu), qui laisse entrer le SMTP, ne s'applique plus. **Sans la règle ci-dessous, plus aucun mail n'arrive depuis Internet** (les tests locaux sur `127.0.0.1` continuent pourtant de passer) :
+>
+> ```bash
+> sudo ufw route allow proto tcp to 10.89.25.0/24 port 1025 comment 'Mailpit SMTP (reseau mailpit)'
+> ```
+>
+> L'ancienne règle `10.88.0.0/16 1025/tcp` ne sert plus. Vous pouvez la supprimer une fois les tests passés : `sudo ufw status numbered`, puis `sudo ufw delete <numéro>`.
 
 ## Étape 5 — Configurer le relais
 
@@ -274,6 +306,9 @@ Un arrêt du relais ne fait perdre **aucun** mail, même ceux arrivés pendant l
 | Symptôme | Cause probable / solution |
 |---|---|
 | Logs du relais : `configuration invalide : …` | Valeur manquante ou mal écrite dans `/etc/mailpit/relay.env` (le message dit laquelle) |
+| Build de l'image : `DNS: transient error`, puis `unable to select packages` | ufw bloque la sortie des conteneurs (`deny (routed)`) : voir l'[étape 1](#si-ufw-est-actif--laisser-sortir-les-conteneurs) |
+| Relais : `API (message) injoignable : … Could not resolve host` ou `timed out` dès le premier mail | Même cause : règle `ufw route allow from 10.89.25.0/24` manquante (étape 1) |
+| Plus aucun mail n'arrive depuis Internet après l'étape 8 (mais `swaks` vers `127.0.0.1` passe) | Règle ufw du SMTP pas adaptée au réseau `mailpit` : voir l'encadré de l'[étape 4](#étape-4--créer-un-réseau-privé-pour-mailpit-et-le-relais) |
 | `systemctl start mailpit-relay` : image introuvable | L'étape 3 n'a pas été faite, ou le nom ne correspond pas à `Image=` |
 | Logs de **Mailpit** : `no such host` pour `mailpit-relay` | Les deux conteneurs ne sont pas sur le réseau `mailpit` (ligne `Network=` oubliée, Mailpit pas redémarré), ou `aardvark-dns` absent (`dns_enabled: false`) |
 | Logs de **Mailpit** : `connection refused` | Le relais est arrêté : `sudo systemctl status mailpit-relay` |
@@ -293,7 +328,7 @@ Un arrêt du relais ne fait perdre **aucun** mail, même ceux arrivés pendant l
 | Relais : `supprimé de Mailpit avant d'avoir été relayé` | Mail supprimé avant d'être relayé (à la main, ou par `MP_MAX_MESSAGES` / `MP_MAX_AGE`) : il ne peut plus être envoyé |
 | Relais : `Mailpit … : HTTP 400` sur la recherche | Filtre `RELAY_QUERY` mal écrit (syntaxe de recherche de Mailpit) |
 
-> ℹ️ Vous utilisiez aussi `host.containers.internal` avec ufw (dépannage de la [Partie 6](06-webhook.md#dépannage-webhook)) ? Le réseau `mailpit` n'utilise pas le sous-réseau `10.88.0.0/16`. Retrouvez le sien avec `sudo podman network inspect mailpit | grep subnet` et adaptez la règle ufw.
+> ℹ️ Vous utilisiez aussi `host.containers.internal` avec ufw (dépannage de la [Partie 6](06-webhook.md#dépannage-webhook)) ? Le réseau `mailpit` utilise le sous-réseau `10.89.25.0/24`, et non `10.88.0.0/16` : adaptez la règle ufw.
 
 ---
 

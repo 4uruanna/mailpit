@@ -17,7 +17,8 @@ use RuntimeException;
  * Variables disponibles dans les gabarits :
  *   $e($valeur)        texte échappé pour le HTML (à utiliser pour TOUT ce qui vient de la base)
  *   $url('/v1/app/…')  URL avec le préfixe base_path
- *   $date($dateTime)   date lisible, dans le fuseau du Dashboard
+ *   $date($dateTime)   date lisible, dans le fuseau du Dashboard (objet date ou texte ISO 8601)
+ *   $bytes($taille)    taille lisible (« 12,4 Ko »)
  *   $csrf              jeton anti-CSRF, à mettre dans chaque formulaire POST (champ « _csrf »)
  *   $admin             identifiant de l'administrateur connecté, ou null
  *   $flash             message à afficher : ['type' => 'success'|'error', 'message' => '…'] ou null
@@ -45,6 +46,7 @@ final readonly class View
             'e'     => static fn (mixed $value): string => htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'),
             'url'   => $this->url(...),
             'date'  => $this->date(...),
+            'bytes' => self::bytes(...),
             'csrf'  => $this->session->csrfToken(),
             'admin' => $this->session->username(),
             'flash' => $vars['flash'] ?? $this->session->takeFlash('message'),
@@ -65,13 +67,26 @@ final readonly class View
         return $this->responseFactory->createResponse(303)->withHeader('Location', $this->url($path));
     }
 
-    public function date(?DateTimeInterface $date): string
+    /** @param DateTimeInterface|string|null $date objet date, ou date ISO 8601 (« 2026-11-09T08:31:20.474Z ») */
+    public function date(DateTimeInterface|string|null $date): string
     {
-        if ($date === null) {
+        if ($date === null || $date === '') {
             return '—';
         }
 
-        return DateTimeImmutable::createFromInterface($date)->setTimezone($this->timezone)->format('d/m/Y H:i:s');
+        $date = is_string($date) ? new DateTimeImmutable($date) : DateTimeImmutable::createFromInterface($date);
+
+        return $date->setTimezone($this->timezone)->format('d/m/Y H:i:s');
+    }
+
+    /** Taille lisible : « 512 o », « 12,4 Ko », « 3,1 Mo ». */
+    public static function bytes(int $size): string
+    {
+        return match (true) {
+            $size < 1024        => $size . ' o',
+            $size < 1024 ** 2   => number_format($size / 1024, 1, ',', ' ') . ' Ko',
+            default             => number_format($size / 1024 ** 2, 1, ',', ' ') . ' Mo',
+        };
     }
 
     /** @param array<string, mixed> $vars */

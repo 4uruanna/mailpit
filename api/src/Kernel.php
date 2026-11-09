@@ -93,7 +93,7 @@ final class Kernel
         $session = new Session($settings->basePath . '/v1/app', $settings->sessionLifetime);
         $view = new View(dirname(__DIR__) . '/templates', $settings->basePath, new DateTimeZone($settings->timezone), $session, $responseFactory);
         $signIn = new SignInController(new LoginThrottle($admins, new LoginAttemptRepository($database)), $session, $view, $ipResolver);
-        $messagesPage = new MessagesController($messages, $view);
+        $messagesPage = new MessagesController($messages, $files, $view);
         $tokensPage = new TokensController($tokens, $messages, $session, $view);
 
         //   POST   /v1/messages                     relais : le mail (JSON)
@@ -125,6 +125,9 @@ final class Kernel
                     $admin->get('', static fn (): ResponseInterface => $view->redirect('/v1/app/messages'));
                     $admin->post('/signout', [$signIn, 'signOut']);
                     $admin->get('/messages', [$messagesPage, 'index']);
+                    $admin->get('/messages/{id:[A-Za-z0-9_-]+}', [$messagesPage, 'show']);
+                    $admin->get('/messages/{id:[A-Za-z0-9_-]+}/html', [$messagesPage, 'html']);
+                    $admin->get('/messages/{id:[A-Za-z0-9_-]+}/parts/{partId:[0-9.]+}', [$messagesPage, 'download']);
                     $admin->get('/tokens', [$tokensPage, 'index']);
                     $admin->post('/tokens', [$tokensPage, 'create']);
                     $admin->get('/tokens/{id:[0-9]+}', [$tokensPage, 'show']);

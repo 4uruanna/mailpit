@@ -139,6 +139,27 @@ final readonly class FileStore
         return $ok;
     }
 
+    /**
+     * Ouvre en lecture le fichier d'une pièce (chemin relatif tel qu'enregistré en base).
+     *
+     * @return array{handle: resource, size: int}|null null si le chemin est invalide ou le fichier absent
+     */
+    public function open(?string $relativePath): ?array
+    {
+        // Chemin écrit par partPath() : on n'accepte rien d'autre (jamais de « .. »).
+        if ($relativePath === null || !preg_match('#^[A-Za-z0-9_-]{1,64}/part-[0-9]{1,4}(\.[0-9]{1,4}){0,9}$#', $relativePath)) {
+            return null;
+        }
+
+        $file = $this->directory . '/' . $relativePath;
+        $handle = is_file($file) ? @fopen($file, 'rb') : false;
+        if ($handle === false) {
+            return null;
+        }
+
+        return ['handle' => $handle, 'size' => (int) filesize($file)];
+    }
+
     private function ensureDir(string $dir): void
     {
         if (!is_dir($dir) && !mkdir($dir, 0700, true) && !is_dir($dir)) {

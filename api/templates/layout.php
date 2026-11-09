@@ -81,7 +81,36 @@ code, .code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monosp
 .empty { padding: 32px; text-align: center; color: var(--muted); }
 dl.meta { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; }
 dl.meta dt { color: var(--muted); }
-dl.meta dd { margin: 0; }
+dl.meta dd { margin: 0; overflow-wrap: anywhere; }
+.filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+select { padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; }
+.dropdown { position: relative; }
+.dropdown > summary {
+    list-style: none; cursor: pointer; padding: 8px 32px 8px 12px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--surface); min-width: 220px; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; position: relative;
+}
+.dropdown > summary::-webkit-details-marker { display: none; }
+.dropdown > summary::after { content: "▾"; position: absolute; right: 12px; color: var(--muted); }
+.dropdown[open] > summary { border-color: var(--accent); }
+.dropdown .menu {
+    position: absolute; z-index: 10; top: calc(100% + 4px); left: 0; width: max-content; min-width: 100%; max-width: min(480px, calc(100vw - 32px));
+    max-height: 320px; overflow-y: auto; padding: 6px; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, .15);
+}
+.dropdown .option { display: flex; gap: 10px; align-items: center; font-weight: normal; margin: 0; padding: 6px 8px; border-radius: 4px; cursor: pointer; }
+.dropdown .option:hover { background: var(--code-bg); }
+.dropdown .option .grow { flex: 1; overflow-wrap: anywhere; }
+a.subject { color: var(--text); }
+.button.small { padding: 4px 10px; font-weight: normal; font-size: 13px; }
+a.button:hover { text-decoration: none; }
+.actions { margin: 0 0 8px; }
+iframe.mail-html { display: block; width: 100%; height: 640px; resize: vertical; border: 1px solid var(--border); border-radius: 10px; background: #fff; }
+pre.mail-text { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+details.block { margin-top: 20px; }
+details.block > summary { cursor: pointer; font-weight: 600; margin-bottom: 8px; }
+details.block pre.mail-text { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+table.headers th { width: 1%; color: var(--muted); font-weight: 600; font-size: 13px; }
+table.headers td { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; overflow-wrap: anywhere; }
 </style>
 </head>
 <body>
@@ -90,7 +119,7 @@ dl.meta dd { margin: 0; }
     <div class="bar">
         <a class="brand" href="<?= $e($url('/v1/app/messages')) ?>">Mailpit Dashboard</a>
         <nav>
-            <a href="<?= $e($url('/v1/app/messages')) ?>" class="<?= $page === 'messages' ? 'active' : '' ?>">Messages</a>
+            <a href="<?= $e($url('/v1/app/messages')) ?>" class="<?= in_array($page, ['messages', 'message'], true) ? 'active' : '' ?>">Messages</a>
             <a href="<?= $e($url('/v1/app/tokens')) ?>" class="<?= in_array($page, ['tokens', 'token'], true) ? 'active' : '' ?>">Tokens</a>
         </nav>
         <div class="user">

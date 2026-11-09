@@ -87,7 +87,10 @@ Pages HTML pour les administrateurs, dans un navigateur. Voir [Dashboard](#dashb
 | URL | Page |
 |---|---|
 | `/v1/app/signin` | Connexion |
-| `/v1/app/messages` | Tous les mails, du plus récent au plus ancien, 50 par page (`?page=2`…) |
+| `/v1/app/messages` | Tous les mails, 50 par page. Filtres : adresses destinataires (`?address[]=…`, plusieurs possibles), ordre (`?sort=asc` : du plus ancien au plus récent), page (`?page=2`) |
+| `/v1/app/messages/{id}` | Un mail : expéditeur, destinataires, dates, corps HTML et texte, en-têtes, pièces jointes |
+| `/v1/app/messages/{id}/html` | Corps HTML du mail seul, isolé (affiché dans la page précédente) |
+| `/v1/app/messages/{id}/parts/{partId}` | Téléchargement d'une pièce jointe ou d'une image intégrée |
 | `/v1/app/tokens` | Liste des jetons, création, suppression |
 | `/v1/app/tokens/{id}` | Détail d'un jeton : associer et retirer des adresses |
 
@@ -348,9 +351,16 @@ SELECT subject, headers->>'$."X-Mailer"[0]' AS mailer FROM mailpit_messages ORDE
 
 `https://api.amnesic.dev/v1/app/signin`, avec un compte de la table `mailpit_admins` ([étape 2 bis](#2-bis-créer-un-administrateur-du-dashboard)).
 
-- **Messages** : tous les mails enregistrés, du plus récent au plus ancien, 50 par page : date de réception, expéditeur, destinataires (`To`, `Cc`, `Bcc`), sujet et début du texte, nombre de pièces jointes. Un mail dont des pièces sont encore attendues est marqué « incomplet ».
+- **Messages** : tous les mails enregistrés, 50 par page : date de réception, expéditeur, destinataires (`To`, `Cc`, `Bcc`), sujet et début du texte, nombre de pièces jointes. Un mail dont des pièces sont encore attendues est marqué « incomplet ». Deux filtres :
+  - **Adresses** : liste déroulante de toutes les adresses ayant reçu un mail (`To`, `Cc` ou `Bcc`), avec leur nombre de mails. Cochez-en une ou plusieurs puis **Filtrer** : seuls les mails reçus par l'une d'elles restent ;
+  - **Ordre** : du plus récent au plus ancien (par défaut) ou l'inverse. Un clic sur l'en-tête de colonne « Reçu le » inverse aussi l'ordre.
+
+  Les filtres sont dans l'URL : la pagination et le retour depuis un mail les conservent, et une liste filtrée peut être mise en favori.
+- **Un mail** (clic sur sa date ou son sujet) : tous ses champs, le corps HTML et la version texte, les en-têtes, et les pièces jointes avec un lien **Télécharger** (nom de fichier d'origine). Une pièce trop volumineuse (`too_large`) ou pas encore reçue est listée, sans lien.
 - **Tokens** : création (un nom suffit) et suppression des jetons développeurs. Un jeton supprimé est refusé (`401`) dès l'appel suivant.
 - **Détail d'un jeton** : associer ou retirer des adresses, et voir combien de mails chacune a reçus.
+
+**Affichage du HTML d'un mail.** Le HTML vient de l'expéditeur : il est affiché dans un cadre isolé (`iframe` + CSP `sandbox`), où aucun script ni formulaire ne fonctionne, et sans accès à la session du Dashboard. Les images intégrées (`cid:…`) y sont incluses directement. Les **images distantes sont bloquées** par défaut : elles diraient à l'expéditeur que le mail a été ouvert (pixel de suivi). Le lien **Afficher les images distantes** les autorise pour ce mail. Les liens s'ouvrent dans un nouvel onglet.
 
 > ⚠️ **Le jeton n'est affiché qu'une fois**, juste après sa création. Seule son empreinte SHA-256 est gardée en base : s'il est perdu, supprimez-le et créez-en un autre.
 

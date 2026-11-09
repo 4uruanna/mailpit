@@ -1,5 +1,6 @@
-# Tests automatiques (PHPUnit) de l'API et du relais, à chaque push et pull request.
-# En local : voir la section « Tests » de api/README.md et de relay/README.md.
+# Tests automatiques de l'API et du relais (PHPUnit), et du SDK Node.js (Vitest), à chaque push
+# et pull request. En local : voir la section « Tests » de api/README.md et de relay/README.md, et
+# « Développer le SDK » de sdk/README.md.
 name: Tests
 
 on:
@@ -100,3 +101,38 @@ jobs:
 
       - name: PHPUnit
         run: vendor/bin/phpunit --fail-on-skipped
+
+  sdk:
+    name: SDK (Node.js ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: ['22', '24']
+    defaults:
+      run:
+        working-directory: sdk
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: sdk/package-lock.json
+
+      - name: Dépendances
+        run: npm ci
+
+      - name: Types
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm test
+
+      - name: Compilation
+        run: npm run build
+
+      # Liste les fichiers qui seraient publiés sur npm (dist/, src/, README.md, LICENSE).
+      - name: Contenu du paquet
+        run: npm pack --dry-run

@@ -1,0 +1,13 @@
+{
+  // Compilation de src/ vers dist/ (JavaScript ESM + déclarations .d.ts) : npm run build.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": "src",
+    "outDir": "dist",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true
+  },
+  "include": ["src"]
+}

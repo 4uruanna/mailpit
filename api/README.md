@@ -562,6 +562,8 @@ Un développeur reçoit un jeton `mpt_…` et la liste des adresses de test qui 
 
 Le jeton voit les mails dont l'un des destinataires (`To`, `Cc` ou `Bcc`) est une de ses adresses. Les adresses sont comparées sans tenir compte des majuscules. Une adresse peut être associée à plusieurs jetons.
 
+> 💡 En Node.js / TypeScript, le SDK [`@gutilab/amnesic-mail`](../sdk/README.md) appelle ces routes pour vous : `waitForMessage()` attend le prochain mail (au-delà de 60 s si besoin) et le renvoie en entier, `extractCode()` et `extractLinks()` y lisent un code ou un lien.
+
 ### Lister les mails : `GET /v1/messages`
 
 La liste ne donne que des **résumés** : adresses, sujet, extrait (`snippet`), dates, tags et description des pièces jointes. Le corps d'un mail (texte et HTML, jusqu'à 16 Mo chacun) et ses en-têtes se lisent un mail à la fois, avec [`GET /v1/messages/{id}`](#lire-un-mail--get-v1messagesid) : une page de 25 mails complets pourrait dépasser la mémoire allouée à PHP sur l'hébergement.

@@ -18,7 +18,6 @@ CREATE TABLE IF NOT EXISTS mailpit_messages (
     headers       JSON            NULL                    COMMENT 'Tous les en-têtes : {"Nom": ["valeur", …]} (envoyé par le relais)',
     return_path   VARCHAR(320)    NOT NULL DEFAULT ''     COMMENT 'En-tête Return-Path',
     message_date  DATETIME(6)     NULL                    COMMENT 'En-tête Date du mail (UTC)',
-    raw_file      VARCHAR(100)    NULL                    COMMENT 'Mail brut .eml, chemin relatif à storage_dir (envoyé par le relais)',
     tags          JSON            NOT NULL,
     size          BIGINT UNSIGNED NOT NULL DEFAULT 0      COMMENT 'Taille totale en octets',
     attachments   INT UNSIGNED    NOT NULL DEFAULT 0      COMMENT 'Nombre de pièces jointes',
@@ -38,13 +37,13 @@ CREATE TABLE IF NOT EXISTS mailpit_messages (
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_0900_ai_ci;
 
--- Pièces jointes, images intégrées au HTML et mail brut (.eml) de chaque message.
+-- Pièces jointes et images intégrées au HTML de chaque message.
 -- Le contenu est dans un fichier (storage_dir/<mailpit_id>/…), pas dans la base.
 CREATE TABLE IF NOT EXISTS mailpit_parts (
     id           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     message_id   BIGINT UNSIGNED NOT NULL               COMMENT 'mailpit_messages.id',
-    part_id      VARCHAR(50)     NOT NULL               COMMENT 'PartID Mailpit (« 2 », « 1.3 »…) ou « raw » pour le mail brut',
-    kind         ENUM('attachment', 'inline', 'raw') NOT NULL COMMENT 'inline = image intégrée au HTML (cid:…)',
+    part_id      VARCHAR(50)     NOT NULL               COMMENT 'PartID Mailpit (« 2 », « 1.3 »…)',
+    kind         ENUM('attachment', 'inline') NOT NULL  COMMENT 'inline = image intégrée au HTML (cid:…)',
     file_name    VARCHAR(255)    NOT NULL DEFAULT ''    COMMENT 'Nom de fichier d''origine',
     content_type VARCHAR(255)    NOT NULL DEFAULT '',
     content_id   VARCHAR(255)    NOT NULL DEFAULT ''    COMMENT 'Content-ID, référencé par cid:… dans le HTML',

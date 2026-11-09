@@ -5,11 +5,11 @@ declare(strict_types=1);
 namespace Relay;
 
 /**
- * Accès au hook de l'API (dossier api/ du dépôt), avec le jeton RELAY_API_TOKEN
+ * Accès à l'API (dossier api/ du dépôt), avec le jeton RELAY_API_TOKEN
  * dans l'en-tête « Authorization: Bearer … ».
  *
- *   POST {RELAY_TARGET_URL}                          le mail (JSON) ; l'API répond avec les pièces attendues
- *   PUT  {RELAY_TARGET_URL}/{ID}/parts/{PartID}      le contenu d'une pièce, avec son SHA-256
+ *   POST {RELAY_API_URL}/v1/messages                     le mail (JSON) ; l'API répond avec les pièces attendues
+ *   POST {RELAY_API_URL}/v1/messages/{id}/part/{partId}  le contenu d'une pièce, avec son SHA-256
  */
 final readonly class ApiClient
 {
@@ -40,7 +40,7 @@ final readonly class ApiClient
 
         $response = $this->send(
             'POST',
-            $this->config->targetUrl,
+            $this->config->apiUrl . '/v1/messages',
             $headers,
             json_encode($message, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR),
         );
@@ -55,8 +55,8 @@ final readonly class ApiClient
     public function putPart(string $id, string $partId, string $content): array
     {
         $response = $this->send(
-            'PUT',
-            sprintf('%s/%s/parts/%s', $this->config->targetUrl, rawurlencode($id), rawurlencode($partId)),
+            'POST',
+            sprintf('%s/v1/messages/%s/part/%s', $this->config->apiUrl, rawurlencode($id), rawurlencode($partId)),
             [
                 'Content-Type: application/octet-stream',
                 'X-Content-SHA256: ' . hash('sha256', $content),

@@ -3,15 +3,17 @@
 Petite API **PHP 8.5 / Slim 4 / MySQL 8.4** pour un hébergement **OVH Perso**. Elle reçoit chaque mail arrivé dans Mailpit et l'enregistre : le message en base MySQL, les pièces jointes en fichiers.
 
 ```
-relais (serveur Mailpit) ── 1. POST  /hook/mailpit                  mail en JSON ──► table mailpit_messages
+relais (serveur Mailpit) ── 1. POST /v1/messages                     mail en JSON ──► table mailpit_messages
         Authorization:  ◄── réponse : pièces attendues ("missing")
-        Bearer <jeton>  ── 2. PUT   /hook/mailpit/{ID}/parts/{PartID}  une requête par pièce ──► var/messages/{ID}/…
+        Bearer <jeton>  ── 2. POST /v1/messages/{id}/part/{partId}   une requête par pièce ──► var/messages/{id}/…
                         ◄── réponse : "complete": true quand tout est enregistré  + table mailpit_parts
+
+GET /v1/messages ──► liste des mails enregistrés (même jeton, même filtre IP)
 ```
 
 Deux protections, toutes deux obligatoires : l'**IP** de l'appelant doit être dans `webhook.allowed_ips` (sinon `403`), et le **jeton** `webhook.token` doit être présent (sinon `401`). Ce jeton est configuré des deux côtés : dans `config.php` ici, et dans `RELAY_API_TOKEN` côté relais.
 
-Le mail complet est envoyé par le [relais](../relay/README.md), installé sur le serveur Mailpit ([Partie 7 du tutoriel](../docs/mailpit/07-relay.md)) : en-têtes, texte, HTML, pièces jointes, images intégrées et, en option, le mail brut `.eml`. Le relais ne garde rien de son côté : il ne considère un mail comme livré que lorsque l'API répond `"complete": true`.
+Le mail complet est envoyé par le [relais](../relay/README.md), installé sur le serveur Mailpit ([Partie 7 du tutoriel](../docs/mailpit/07-relay.md)) : en-têtes, texte, HTML, pièces jointes et images intégrées. Le relais ne garde rien de son côté : il ne considère un mail comme livré que lorsque l'API répond `"complete": true`.
 
 > ℹ️ L'API accepte aussi le webhook **direct** de Mailpit (sans relais), qui n'envoie qu'un **résumé** : expéditeur, destinataires, sujet, date, taille, nombre de pièces jointes, tags et les 250 premiers caractères du texte (`Snippet`). Voir l'[étape 5](#5-configurer-mailpit).
 
@@ -29,7 +31,8 @@ api/
 ├── sql/
 │   ├── schema.sql                     # tables MySQL (nouvelle installation)
 │   ├── upgrade-001-corps.sql          # mise à jour : colonnes du corps
-│   └── upgrade-002-pieces-jointes.sql # mise à jour : en-têtes, pièces jointes
+│   ├── upgrade-002-pieces-jointes.sql # mise à jour : en-têtes, pièces jointes
+│   └── upgrade-003-sans-eml.sql       # mise à jour : retrait des mails bruts (.eml)
 ├── src/                 # code de l'API
 ├── var/log/             # logs (doit être accessible en écriture)
 ├── var/messages/        # pièces jointes et mails bruts, un dossier par mail (accessible en écriture)
@@ -42,8 +45,9 @@ Toutes exigent le jeton : en-tête `Authorization: Bearer <jeton>` (relais), ou 
 
 | Méthode | URL | Réponse |
 |---|---|---|
-| `POST` | `/hook/mailpit` | Corps : le mail en JSON (voir ci-dessous).<br>`201 {"status":"created", "id":"…", "complete":false, "missing":["2","raw"], "too_large":["3"]}` : message enregistré<br>`200 {"status":"updated"\|"duplicate", …}` : déjà reçu (même ID Mailpit), complété si besoin<br>`400` JSON invalide · `413` trop volumineux · `415` pas du JSON · `422` champ invalide |
-| `PUT` | `/hook/mailpit/{ID}/parts/{PartID}` | Corps : le contenu brut de la pièce (`Content-Type: application/octet-stream`), avec l'en-tête `X-Content-SHA256` (empreinte SHA-256 en hexadécimal).<br>`201 {"status":"stored", "complete":true, "missing":[], …}` : pièce enregistrée<br>`200 {"status":"already-stored", …}` : déjà reçue<br>`404` message ou pièce inconnus · `409` pièce `too_large`, ou déjà reçue avec un autre contenu · `413` au-delà de la limite · `415` mauvais Content-Type · `422` empreinte absente ou différente |
+| `POST` | `/v1/messages` | Corps : le mail en JSON (voir ci-dessous).<br>`201 {"status":"created", "id":"…", "complete":false, "missing":["2","1.3"], "too_large":["4"]}` : message enregistré<br>`200 {"status":"updated"\|"duplicate", …}` : déjà reçu (même ID Mailpit), complété si besoin<br>`400` JSON invalide · `413` trop volumineux · `415` pas du JSON · `422` champ invalide |
+| `POST` | `/v1/messages/{id}/part/{partId}` | Corps : le contenu brut de la pièce (`Content-Type: application/octet-stream`), avec l'en-tête `X-Content-SHA256` (empreinte SHA-256 en hexadécimal).<br>`201 {"status":"stored", "complete":true, "missing":[], …}` : pièce enregistrée<br>`200 {"status":"already-stored", …}` : déjà reçue<br>`404` message ou pièce inconnus · `409` pièce `too_large`, ou déjà reçue avec un autre contenu · `413` au-delà de la limite · `415` mauvais Content-Type · `422` empreinte absente ou différente |
+| `GET` | `/v1/messages` | Liste des mails enregistrés, du plus récent au plus ancien (voir [Lister les mails](#lister-les-mails)).<br>`200 {"total":…, "count":…, "limit":1000, "offset":0, "messages":[…]}`<br>`400` `limit` ou `offset` invalide |
 
 Pour toutes : `401` jeton absent ou faux · `403` IP non autorisée · `500` erreur serveur (base injoignable…). Toute autre URL renvoie `404` (ou `403` si l'IP n'est pas autorisée : le filtre IP passe avant tout le reste).
 
@@ -54,19 +58,18 @@ Pour toutes : `401` jeton absent ou faux · `403` IP non autorisée · `500` err
 | `Text`, `HTML` | colonnes `text_body`, `html_body` |
 | `Headers` (`{"Nom": ["valeur", …]}`) | colonne `headers` |
 | `ReturnPath`, `Date` | colonnes `return_path`, `message_date` |
-| `Parts` : `[{"PartID":"2", "Kind":"attachment", "FileName":"devis.pdf", "ContentType":"application/pdf", "ContentID":"", "Size":123456}, …]` | table `mailpit_parts` (une ligne par pièce). `Kind` vaut `attachment` (pièce jointe), `inline` (image intégrée au HTML, `cid:…`) ou `raw` (mail brut, PartID `raw`) |
+| `Parts` : `[{"PartID":"2", "Kind":"attachment", "FileName":"devis.pdf", "ContentType":"application/pdf", "ContentID":"", "Size":123456}, …]` | table `mailpit_parts` (une ligne par pièce). `Kind` vaut `attachment` (pièce jointe) ou `inline` (image intégrée au HTML, `cid:…`) |
 
 La colonne `payload` garde le JSON reçu **sans** `Text`, `HTML` ni `Headers`, pour ne pas les stocker deux fois.
 
-**Pièces jointes.** Le JSON ne contient que leur description. L'API répond avec la liste `missing` des pièces dont elle attend le contenu, que le relais envoie ensuite une par une (`PUT`). Chaque fichier est vérifié (SHA-256), écrit sur le disque, puis la ligne de `mailpit_parts` passe à l'état `stored`. Le message est **complet** (colonne `completed_at` remplie, `"complete": true`) quand plus aucune pièce n'est attendue.
+**Pièces jointes.** Le JSON ne contient que leur description. L'API répond avec la liste `missing` des pièces dont elle attend le contenu, que le relais envoie ensuite une par une (`POST /v1/messages/{id}/part/{partId}`). Chaque fichier est vérifié (SHA-256), écrit sur le disque, puis la ligne de `mailpit_parts` passe à l'état `stored`. Le message est **complet** (colonne `completed_at` remplie, `"complete": true`) quand plus aucune pièce n'est attendue.
 
-Une pièce plus grosse que `webhook.max_attachment_size` (**5 Mo** par défaut) n'est pas attendue : sa ligne est enregistrée avec l'état `too_large` (nom, type, taille), sans contenu, et elle est listée dans `too_large`. Même chose pour le mail brut au-delà de `webhook.max_raw_size` (25 Mo par défaut).
+Une pièce plus grosse que `webhook.max_attachment_size` (**5 Mo** par défaut) n'est pas attendue : sa ligne est enregistrée avec l'état `too_large` (nom, type, taille), sans contenu, et elle est listée dans `too_large`.
 
 Fichiers sur le disque (dossier `webhook.storage_dir`, par défaut `var/messages/`) :
 
 ```
 var/messages/<ID Mailpit>/part-<PartID>    une pièce jointe ou image intégrée (le nom d'origine est en base)
-var/messages/<ID Mailpit>/message.eml      le mail brut (RELAY_INCLUDE_RAW=true côté relais)
 ```
 
 ---
@@ -92,7 +95,6 @@ cp config.example.php config.php
 | `webhook.token` | **obligatoire** : le secret partagé avec le relais, généré avec `openssl rand -hex 32` (32 caractères minimum). La même valeur va dans `RELAY_API_TOKEN` côté relais |
 | `webhook.max_attachment_size` | taille maximale d'une pièce jointe, 5 Mo par défaut |
 | `webhook.max_messages` | nombre de mails gardés, 1000 par défaut (comme `MP_MAX_MESSAGES` côté Mailpit). `0` = sans limite |
-| `webhook.max_raw_size` | taille maximale du mail brut `.eml`, 25 Mo par défaut |
 | `debug` | `false` en production |
 
 Générez le jeton une seule fois, puis copiez-le aux deux endroits :
@@ -119,7 +121,8 @@ Espace client OVH → **Bases de données** → **…** → **Aller sur phpMyAdm
 
 > **Tables déjà créées avec une version précédente ?** Importez, une seule fois chacun et dans l'ordre, les fichiers de mise à jour que vous n'avez pas encore passés :
 > - `sql/upgrade-001-corps.sql` : colonnes `text_body`, `html_body` et `raw_file` ;
-> - `sql/upgrade-002-pieces-jointes.sql` : colonnes `headers`, `return_path`, `message_date`, `completed_at` et table `mailpit_parts`. Les mails déjà en base sont marqués complets.
+> - `sql/upgrade-002-pieces-jointes.sql` : colonnes `headers`, `return_path`, `message_date`, `completed_at` et table `mailpit_parts`. Les mails déjà en base sont marqués complets ;
+> - `sql/upgrade-003-sans-eml.sql` : retire la colonne `raw_file` et les pièces `raw` (mails bruts `.eml`). Supprimez ensuite par FTP les fichiers `.eml` restants : `var/messages/<ID>/message.eml`, et `var/messages/<ID>.eml` pour les toutes premières versions.
 
 ### 3. Envoyer en FTP
 
@@ -143,13 +146,13 @@ Espace client OVH → **Hébergements** → onglet **Multisite** → **Ajouter u
 
 ### 5. Configurer Mailpit
 
-**Avec le relais** (mail complet, pièces jointes comprises : recommandé) : suivez la [Partie 7 du tuto](../docs/mailpit/07-relay.md). `https://api.amnesic.dev/hook/mailpit` va dans `RELAY_TARGET_URL`, le jeton dans `RELAY_API_TOKEN`, et Mailpit appelle le relais.
+**Avec le relais** (mail complet, pièces jointes comprises : recommandé) : suivez la [Partie 7 du tuto](../docs/mailpit/07-relay.md). `https://api.amnesic.dev` va dans `RELAY_API_URL`, le jeton dans `RELAY_API_TOKEN`, et Mailpit appelle le relais.
 
 **Sans relais** (résumé seulement, aucun nouvel essai si l'API est injoignable) : le détail est dans la [Partie 6 du tuto](../docs/mailpit/06-webhook.md). En résumé, sur le serveur Debian, ajoutez à `/etc/mailpit/mailpit.env` :
 
 ```ini
 # Webhook appelé à chaque nouveau mail (Mailpit ne sait pas envoyer d'en-tête : jeton dans l'URL)
-MP_WEBHOOK_URL=https://api.amnesic.dev/hook/mailpit?token=LE_JETON_DE_CONFIG_PHP
+MP_WEBHOOK_URL=https://api.amnesic.dev/v1/messages?token=LE_JETON_DE_CONFIG_PHP
 
 # 0 = pas de limite. Par défaut Mailpit n'envoie qu'UN webhook par seconde
 # et IGNORE les mails reçus entre-temps : ils n'arriveraient jamais dans l'API.
@@ -174,7 +177,7 @@ sudo systemctl restart mailpit
 **Depuis le serveur Mailpit** (le seul autorisé), un appel manuel :
 
 ```bash
-curl -i -X POST 'https://api.amnesic.dev/hook/mailpit' \
+curl -i -X POST 'https://api.amnesic.dev/v1/messages' \
   -H 'Authorization: Bearer LE_JETON_DE_CONFIG_PHP' \
   -H 'Content-Type: application/json' \
   -d '{"ID":"test-manuel-1","Created":"2026-01-01T12:00:00Z","Subject":"Test manuel","From":{"Name":"","Address":"moi@exemple.fr"},"To":[],"Parts":[{"PartID":"2","Kind":"attachment","FileName":"test.txt","ContentType":"text/plain","ContentID":"","Size":5}]}'
@@ -187,7 +190,7 @@ printf 'hello' > /tmp/test.txt
 ```
 
 ```bash
-curl -i -X PUT 'https://api.amnesic.dev/hook/mailpit/test-manuel-1/parts/2' \
+curl -i -X POST 'https://api.amnesic.dev/v1/messages/test-manuel-1/part/2' \
   -H 'Authorization: Bearer LE_JETON_DE_CONFIG_PHP' \
   -H 'Content-Type: application/octet-stream' \
   -H "X-Content-SHA256: $(sha256sum /tmp/test.txt | cut -d' ' -f1)" \
@@ -196,7 +199,13 @@ curl -i -X PUT 'https://api.amnesic.dev/hook/mailpit/test-manuel-1/parts/2' \
 
 Réponse attendue : `HTTP/2 201` et `"complete":true`. Le fichier est dans `var/messages/test-manuel-1/part-2`. Supprimez ensuite la ligne de test dans phpMyAdmin (sa pièce est supprimée avec elle) et le dossier `var/messages/test-manuel-1/` par FTP.
 
-**Pièce jointe de 5 Mo** : l'hébergement doit accepter des requêtes de cette taille. Les pièces sont envoyées en `PUT`, que la limite PHP `post_max_size` ne concerne pas. Pour vérifier, recommencez le test ci-dessus avec un fichier de 5 Mo (`head -c 5242880 /dev/urandom > /tmp/test.txt`) et `"Size":5242880` dans le `POST`.
+Puis la liste :
+
+```bash
+curl -s 'https://api.amnesic.dev/v1/messages' -H 'Authorization: Bearer LE_JETON_DE_CONFIG_PHP'
+```
+
+**Pièce jointe de 5 Mo** : l'hébergement doit accepter des requêtes `POST` de cette taille (réglage PHP `post_max_size`, plus élevé que 5 Mo sur les hébergements OVH). Pour vérifier, recommencez le test ci-dessus avec un fichier de 5 Mo (`head -c 5242880 /dev/urandom > /tmp/test.txt`) et `"Size":5242880` dans le `POST`.
 
 **De bout en bout** : envoyez un mail comme en [Partie 1, étape 5](../docs/mailpit/01-podman.md#étape-5--démarrer-le-service) :
 
@@ -221,11 +230,11 @@ Le message doit apparaître dans la table `mailpit_messages`.
 | `401` avec `jeton absent` alors que le relais envoie bien le jeton | L'en-tête `Authorization` n'arrive pas jusqu'à PHP : vérifiez que les `.htaccess` (racine et `public/`) ont bien été envoyés, à jour |
 | `500` avec `{"error":"Erreur de configuration du serveur"}` | `vendor/` ou `config.php` absent, ou `config.php` invalide (détail dans `var/log/api.log`). Après une mise à jour : `webhook.token` est désormais **obligatoire** (32 caractères minimum) |
 | `500` avec `Slim Application Error` | Souvent la base : identifiants faux ou table absente. Détail dans `var/log/api.log` |
-| `404` sur `/hook/mailpit` | `.htaccess` non envoyés (fichiers cachés), ou mauvais dossier racine du multisite. Si l'API est dans un sous-dossier de l'URL, renseignez `base_path` |
+| `404` sur `/v1/messages` | `.htaccess` non envoyés (fichiers cachés), ou mauvais dossier racine du multisite. Si l'API est dans un sous-dossier de l'URL, renseignez `base_path` |
 | Certains mails manquent en base | `MP_WEBHOOK_LIMIT` n'est pas à `0` (voir l'étape 5) |
-| `413` sur `POST /hook/mailpit` | Le JSON du mail (texte + HTML + en-têtes) dépasse `webhook.max_body_size` (16 Mo par défaut) : augmentez-le |
-| `413` sur `PUT …/parts/…` | La pièce dépasse la limite, alors que sa taille annoncée était plus petite : cas anormal, voir les logs du relais |
-| Log PHP `POST Content-Length of … exceeds the limit` | Un mail au texte ou HTML très lourd dépasse `post_max_size` de l'hébergement. Le JSON est quand même lu et enregistré : l'avertissement est sans effet tant que `display_errors` est désactivé (`environment=production` dans `.ovhconfig`) |
+| `413` sur `POST /v1/messages` | Le JSON du mail (texte + HTML + en-têtes) dépasse `webhook.max_body_size` (16 Mo par défaut) : augmentez-le |
+| `413` sur `POST /v1/messages/…/part/…` | La pièce dépasse la limite, alors que sa taille annoncée était plus petite : cas anormal, voir les logs du relais |
+| Log PHP `POST Content-Length of … exceeds the limit` | Un mail au texte ou HTML très lourd, ou une pièce jointe, dépasse `post_max_size` de l'hébergement. Le JSON est quand même lu et enregistré : l'avertissement est sans effet tant que `display_errors` est désactivé (`environment=production` dans `.ovhconfig`) |
 | Pièce jointe en `too_large` | Elle dépasse `webhook.max_attachment_size` (5 Mo par défaut). Seule sa description est enregistrée |
 | Des mails anciens ont disparu | Normal : seuls les `webhook.max_messages` derniers (1000 par défaut) sont gardés. Les échecs de purge sont écrits dans `var/log/api.log` (`[prune] …`) |
 | `text_body` toujours vide | Le webhook ne passe pas par le relais (`MP_WEBHOOK_URL` pointe directement sur l'API), ou une mise à jour SQL n'a pas été importée (erreur `Unknown column` ou `Table … doesn't exist` dans le log) |
@@ -252,7 +261,7 @@ ORDER BY created_at DESC;
 -- Pièces jointes d'un mail, avec le fichier correspondant dans var/messages/
 SELECT p.file_name, p.content_type, p.size, p.status, p.storage_path
 FROM mailpit_parts p JOIN mailpit_messages m ON m.id = p.message_id
-WHERE m.mailpit_id = 'Wdyx4jVvBWELmoNePrh8Ff' AND p.kind <> 'raw';
+WHERE m.mailpit_id = 'Wdyx4jVvBWELmoNePrh8Ff';
 
 -- Mails incomplets (pièces encore attendues)
 SELECT mailpit_id, received_at, subject FROM mailpit_messages WHERE completed_at IS NULL;
@@ -260,6 +269,65 @@ SELECT mailpit_id, received_at, subject FROM mailpit_messages WHERE completed_at
 -- Valeur d'un en-tête
 SELECT subject, headers->>'$."X-Mailer"[0]' AS mailer FROM mailpit_messages ORDER BY id DESC LIMIT 10;
 ```
+
+## Lister les mails
+
+`GET /v1/messages` renvoie les mails enregistrés, du plus récent au plus ancien (date de réception par Mailpit), avec la description de leurs pièces jointes. Le corps (texte, HTML) et les en-têtes n'y sont pas, pour garder la réponse légère.
+
+Comme les autres routes, elle exige le jeton et n'est accessible que depuis les IP de `webhook.allowed_ips`. Pour l'appeler depuis une autre machine, ajoutez son IP à cette liste.
+
+| Paramètre | Défaut | Rôle |
+|---|---|---|
+| `limit` | `1000` | nombre de mails renvoyés (1 à 1000) |
+| `offset` | `0` | nombre de mails à sauter, pour paginer |
+
+Avec la rétention par défaut (1000 mails), un seul appel renvoie **tous** les mails.
+
+```bash
+curl -s 'https://api.amnesic.dev/v1/messages?limit=50&offset=0' -H 'Authorization: Bearer LE_JETON_DE_CONFIG_PHP'
+```
+
+```json
+{
+  "total": 2,
+  "count": 2,
+  "limit": 50,
+  "offset": 0,
+  "messages": [
+    {
+      "id": "2qGgGUqCw5N3mAOHzyFGoJ",
+      "message_id": "2CJGY3JTeKc0YxSLai06kR@mailpit",
+      "from": { "name": "Alice", "address": "alice@exemple.fr" },
+      "to": [ { "name": "", "address": "essai@test.mondomaine.fr" } ],
+      "cc": [], "bcc": [], "reply_to": [],
+      "subject": "Devis",
+      "snippet": "Bonjour, voici le devis…",
+      "return_path": "alice@exemple.fr",
+      "tags": [],
+      "size": 1053210,
+      "attachments": 1,
+      "username": null,
+      "label": null,
+      "date": "2026-11-09T08:31:20.000Z",
+      "created_at": "2026-11-09T08:31:20.474Z",
+      "received_at": "2026-11-09T08:31:21.205Z",
+      "complete": true,
+      "parts": [
+        { "part_id": "2", "kind": "attachment", "file_name": "devis.pdf", "content_type": "application/pdf",
+          "content_id": "", "size": 1048576, "status": "stored" }
+      ]
+    }
+  ]
+}
+```
+
+| Champ | Contenu |
+|---|---|
+| `id` | ID du mail dans Mailpit (colonne `mailpit_id`), utilisé aussi pour son dossier `var/messages/<id>/` |
+| `date` | en-tête `Date` du mail · `created_at` : réception par Mailpit · `received_at` : réception par l'API (UTC, ISO 8601) |
+| `complete` | `true` quand toutes les pièces attendues sont enregistrées |
+| `parts[].status` | `stored` (fichier `var/messages/<id>/part-<part_id>`), `pending` (pas encore reçue) ou `too_large` (au-delà de la limite, non enregistrée) |
+| `label`, `username` | en-tête `Mailpit-Label` (`RELAY_LABEL`) et utilisateur SMTP authentifié, ou `null` |
 
 ## Rétention : les 1000 derniers mails
 

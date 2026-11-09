@@ -28,7 +28,6 @@ final readonly class Settings
         public string $token,
         public int $maxBodySize,
         public int $maxPartSize,
-        public int $maxRawSize,
         /** Nombre de mails gardés (les plus anciens sont supprimés), 0 = sans limite. */
         public int $maxMessages,
         public string $storageDir,
@@ -66,8 +65,7 @@ final readonly class Settings
             ));
         }
 
-        // « raw_dir » : ancien nom de « storage_dir », encore accepté.
-        $storageDir = $webhook['storage_dir'] ?? $webhook['raw_dir'] ?? dirname(__DIR__) . '/var/messages';
+        $storageDir = $webhook['storage_dir'] ?? dirname(__DIR__) . '/var/messages';
 
         return new self(
             debug: (bool) ($config['debug'] ?? false),
@@ -84,7 +82,6 @@ final readonly class Settings
             token: trim($token),
             maxBodySize: self::size($webhook, 'max_body_size', 16 * 1024 * 1024),
             maxPartSize: self::size($webhook, 'max_attachment_size', 5 * 1024 * 1024),
-            maxRawSize: self::size($webhook, 'max_raw_size', 25 * 1024 * 1024),
             maxMessages: self::maxMessages($webhook),
             storageDir: rtrim((string) $storageDir, '/'),
             trustedProxies: self::stringList($proxy['trusted_proxies'] ?? [], 'proxy.trusted_proxies'),

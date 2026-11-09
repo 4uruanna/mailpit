@@ -5,22 +5,17 @@ declare(strict_types=1);
 namespace App\Mailpit;
 
 /**
- * Pièce d'un mail annoncée par le relais : pièce jointe, image intégrée au HTML
- * (« inline ») ou mail brut complet (.eml, PartID « raw »).
+ * Pièce d'un mail annoncée par le relais : pièce jointe, ou image intégrée au HTML (« inline »).
  * Le contenu n'est pas dans le JSON : il est envoyé ensuite, une requête par pièce
- * (PUT /hook/mailpit/{ID}/parts/{PartID}).
+ * (POST /v1/messages/{id}/part/{partId}).
  */
 final readonly class Part
 {
     public const string KIND_ATTACHMENT = 'attachment';
     public const string KIND_INLINE = 'inline';
-    public const string KIND_RAW = 'raw';
 
-    /** PartID du mail brut. */
-    public const string RAW_ID = 'raw';
-
-    /** PartID Mailpit (« 2 », « 1.3 », « 2.1.4 »…) ou « raw ». Sert aussi de nom de fichier : rien d'autre n'est accepté. */
-    public const string ID_PATTERN = '/^(raw|[0-9]{1,4}(\.[0-9]{1,4}){0,9})$/';
+    /** PartID Mailpit (« 2 », « 1.3 », « 2.1.4 »…). Sert aussi de nom de fichier : rien d'autre n'est accepté. */
+    public const string ID_PATTERN = '/^[0-9]{1,4}(\.[0-9]{1,4}){0,9}$/';
 
     public function __construct(
         public string $partId,
@@ -48,11 +43,8 @@ final readonly class Part
         }
 
         $kind = $data['Kind'] ?? null;
-        if (!in_array($kind, [self::KIND_ATTACHMENT, self::KIND_INLINE, self::KIND_RAW], true)) {
-            throw new InvalidPayloadException($where . ' : « Kind » doit valoir attachment, inline ou raw');
-        }
-        if (($kind === self::KIND_RAW) !== ($partId === self::RAW_ID)) {
-            throw new InvalidPayloadException($where . ' : seul le PartID « raw » peut être de type raw');
+        if (!in_array($kind, [self::KIND_ATTACHMENT, self::KIND_INLINE], true)) {
+            throw new InvalidPayloadException($where . ' : « Kind » doit valoir attachment ou inline');
         }
 
         $size = $data['Size'] ?? null;

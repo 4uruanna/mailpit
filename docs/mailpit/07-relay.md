@@ -17,12 +17,12 @@ Le **relais** (dossier [`relay/`](../../relay/README.md) du dépôt) comble ce m
                                                     │ 3. le mail (JSON), puis chaque pièce jointe
                                                     │    Authorization: Bearer <jeton>
                                                     ▼
-                                  https://api.mondomaine.fr/hook/mailpit
+                                     https://api.mondomaine.fr/v1/messages
 ```
 
 Ce que le relais apporte :
 
-- **Le mail complet** : en-têtes, texte, HTML, pièces jointes et images intégrées (5 Mo maximum par pièce, réglable côté API), et en option le mail brut `.eml`. Tout est enregistré par l'API : le relais ne garde rien.
+- **Le mail complet** : en-têtes, texte, HTML, pièces jointes et images intégrées (5 Mo maximum par pièce, réglable côté API). Tout est enregistré par l'API : le relais ne garde rien.
 - **Aucun mail perdu.** Le relais ne pose le tag `relayed` sur un mail dans Mailpit qu'une fois que l'API a confirmé avoir **tout** enregistré. Tant que ce n'est pas le cas, il réessaie (30 s, 1 min, 2 min… puis toutes les heures, sans limite), y compris après un redémarrage. C'est Mailpit qui sert de file d'attente. Mailpit seul, lui, n'essaie qu'une fois.
 - **Un mail à la fois.** Le relais termine un mail (message, pièces jointes une par une, tag) avant de passer au suivant : il n'envoie jamais deux requêtes en même temps à l'API.
 - **Les 1000 derniers mails, des deux côtés.** Mailpit (`MP_MAX_MESSAGES=1000`, [Partie 1](01-podman.md#étape-3--créer-le-fichier-de-configuration-de-mailpit)) et l'API (`webhook.max_messages`) suppriment les plus anciens au-delà de 1000.
@@ -101,8 +101,8 @@ sudo nano /etc/mailpit/relay.env
 Contenu (modèle complet : [`relay/relay.env.example`](../../relay/relay.env.example)) :
 
 ```ini
-# API qui reçoit les mails (sans « ?token=… »)
-RELAY_TARGET_URL=https://api.mondomaine.fr/hook/mailpit
+# Adresse de base de l'API (sans « /v1/messages » ni « ?token=… »)
+RELAY_API_URL=https://api.mondomaine.fr
 
 # Le jeton de l'API : EXACTEMENT la valeur de webhook.token dans son config.php
 RELAY_API_TOKEN=LE_JETON_DE_CONFIG_PHP
@@ -112,9 +112,6 @@ RELAY_MAILPIT_URL=http://mailpit:8025
 
 # Les identifiants de MP_UI_AUTH (fichier mailpit.env)
 RELAY_MAILPIT_AUTH=admin:MotDePasseSolide
-
-# true : envoie aussi le mail brut (.eml). Les pièces jointes sont envoyées dans tous les cas.
-RELAY_INCLUDE_RAW=false
 
 # Facultatif : ne relayer que les mails reçus à partir de cette date (voir l'encadré)
 #RELAY_QUERY=after:2026-11-08
@@ -128,7 +125,7 @@ sudo chmod 600 /etc/mailpit/relay.env
 
 > ⚠️ **Au premier démarrage, le relais envoie à l'API tous les mails déjà présents dans Mailpit.** C'est voulu : il relaie tout mail qui n'a pas encore le tag `relayed`. Pour ne relayer que les nouveaux, décommentez `RELAY_QUERY` avec la date du jour.
 
-> ℹ️ L'API enregistre les pièces jointes (et les `.eml` avec `RELAY_INCLUDE_RAW=true`) en fichiers dans son dossier `var/messages/`. Pensez à la taille : l'espace d'un hébergement mutualisé est limité.
+> ℹ️ L'API enregistre les pièces jointes en fichiers dans son dossier `var/messages/`. Pensez à la taille : l'espace d'un hébergement mutualisé est limité.
 
 ## Étape 6 — Créer le service du relais
 
@@ -272,11 +269,11 @@ Un arrêt du relais ne fait perdre **aucun** mail, même ceux arrivés pendant l
 
 ## Mettre à jour un relais installé avec l'ancienne version
 
-L'ancienne version gardait une file d'attente sur disque et passait le jeton dans l'URL. La nouvelle n'enregistre rien et exige le jeton des deux côtés. Mettez à jour **l'API d'abord**, puis le relais : entre les deux, le relais reçoit des erreurs et réessaie, sans rien perdre.
+Les versions précédentes appelaient l'API sur `/hook/mailpit` et pouvaient envoyer le mail brut (`.eml`). La version actuelle appelle `/v1/messages`, n'envoie plus de `.eml`, n'enregistre rien et exige le jeton des deux côtés. Relais et API doivent être mis à jour ensemble : mettez à jour **l'API d'abord**, puis le relais. Entre les deux, le relais reçoit des erreurs et réessaie, sans rien perdre.
 
-1. **API** (voir son [README](../../api/README.md)) : importez `sql/upgrade-002-pieces-jointes.sql`, renvoyez par FTP les fichiers à jour (`src/`, `.htaccess`, `public/.htaccess`), et mettez un jeton dans `webhook.token` de `config.php` (`openssl rand -hex 32`). Il est désormais obligatoire.
-2. **`/etc/mailpit/relay.env`** : retirez `?token=…` de `RELAY_TARGET_URL`, ajoutez `RELAY_API_TOKEN=` avec le jeton, et supprimez `RELAY_MAX_RAW_SIZE` et `RELAY_MAX_ATTEMPTS` (les limites de taille sont maintenant réglées côté API).
-3. **`/etc/containers/systemd/mailpit-relay.container`** : remplacez la ligne `Volume=mailpit-relay-data:/data` par `ReadOnly=true`.
+1. **API** (voir son [README](../../api/README.md)) : importez les fichiers `sql/upgrade-00X-….sql` pas encore passés (`002`, puis `003`), renvoyez par FTP les fichiers à jour (`src/`, `.htaccess`, `public/.htaccess`), et vérifiez que `webhook.token` de `config.php` contient un jeton (`openssl rand -hex 32`) : il est obligatoire. Supprimez aussi `max_raw_size` de `config.php` s'il y figure, et les fichiers `.eml` restants dans `var/messages/`.
+2. **`/etc/mailpit/relay.env`** : remplacez `RELAY_TARGET_URL=…` par `RELAY_API_URL=https://api.mondomaine.fr` (adresse de base, sans `/hook/mailpit` ni `?token=…`), ajoutez `RELAY_API_TOKEN=` avec le jeton s'il n'y est pas, et supprimez `RELAY_INCLUDE_RAW`, `RELAY_MAX_RAW_SIZE` et `RELAY_MAX_ATTEMPTS` s'ils y figurent.
+3. **`/etc/containers/systemd/mailpit-relay.container`** : si la ligne `Volume=mailpit-relay-data:/data` existe encore, remplacez-la par `ReadOnly=true`.
 4. Reconstruisez l'image et redémarrez :
    ```bash
    sudo git -C /opt/mailpit-src pull
@@ -287,12 +284,12 @@ L'ancienne version gardait une file d'attente sur disque et passait le jeton dan
    ```bash
    sudo systemctl daemon-reload && sudo systemctl restart mailpit-relay
    ```
-5. Une fois les logs du relais sans erreur, supprimez l'ancienne file d'attente :
+5. Si vous veniez de la toute première version (file d'attente sur disque), supprimez son volume une fois les logs du relais sans erreur :
    ```bash
    sudo podman volume rm mailpit-relay-data
    ```
 
-> ℹ️ Les mails relayés par l'ancienne version n'ont pas le tag `relayed` : le nouveau relais les renvoie tous une fois. L'API les reconnaît et complète simplement ce qui leur manquait (en-têtes, pièces jointes). Pour l'éviter, mettez `RELAY_QUERY=after:AAAA-MM-JJ` avec la date de la mise à jour.
+> ℹ️ Venant de la toute première version, les mails déjà relayés n'ont pas le tag `relayed` : le nouveau relais les renvoie tous une fois. L'API les reconnaît et complète simplement ce qui leur manquait (en-têtes, pièces jointes). Pour l'éviter, mettez `RELAY_QUERY=after:AAAA-MM-JJ` avec la date de la mise à jour.
 
 ---
 
@@ -308,12 +305,14 @@ L'ancienne version gardait une file d'attente sur disque et passait le jeton dan
 | Relais : `Could not resolve host: mailpit` | Mailpit n'est pas sur le réseau `mailpit` (étape 4), ou son conteneur ne s'appelle pas `mailpit` |
 | Relais : `un autre relais tourne déjà dans ce conteneur` | Vous avez lancé `bin/relay.php` à la main dans le conteneur : inutile, le relais tourne déjà. Les scripts `status.php` et `retry-failed.php`, eux, peuvent être lancés à tout moment |
 | Relais : `configuration invalide : RELAY_API_TOKEN manquant ou trop court` | Mettez dans `RELAY_API_TOKEN` la valeur de `webhook.token` (32 caractères minimum) |
-| Relais : `RELAY_TARGET_URL ne doit pas contenir de « ?… »` | Ancienne configuration : retirez `?token=…` de l'URL et mettez le jeton dans `RELAY_API_TOKEN` |
+| Relais : `RELAY_TARGET_URL n'existe plus` | Ancienne configuration : remplacez-la par `RELAY_API_URL=https://api.mondomaine.fr` (voir [Mettre à jour](#mettre-à-jour-un-relais-installé-avec-lancienne-version)) |
+| Relais : `RELAY_INCLUDE_RAW n'existe plus` | Les `.eml` ne sont plus gérés : retirez la ligne de `relay.env` (simple avertissement) |
+| Relais : `HTTP 404` ou `HTTP 405` | L'API n'est pas à jour (elle attend encore `/hook/mailpit`), ou `RELAY_API_URL` contient un chemin en trop (`/v1/messages`, `/hook/mailpit`) |
 | Relais : `HTTP 401` | Jeton différent entre `RELAY_API_TOKEN` et `webhook.token` de l'API, ou `.htaccess` de l'API pas à jour (l'en-tête `Authorization` n'arrive pas à PHP). Le relais réessaie : corrigez, il n'y a rien à relancer |
 | Relais : `HTTP 403` | IP du serveur absente de `allowed_ips` (pensez à l'IPv6). Le relais réessaie : corrigez l'API, il n'y a rien à relancer |
 | Relais : `HTTP 500` | Souvent l'API pas à jour : `sql/upgrade-002-pieces-jointes.sql` pas importé, ou `webhook.token` absent de `config.php`. Détail dans `var/log/api.log` |
 | Relais : `refusé par l'API (… HTTP 413 …)` | Le JSON du mail dépasse `max_body_size` de l'API : augmentez-le dans son `config.php`, puis lancez `retry-failed.php` |
-| Relais : `au-delà de la limite de l'API, seule sa description est enregistrée` | Pièce jointe de plus de 5 Mo (`max_attachment_size`), ou `.eml` de plus de 25 Mo (`max_raw_size`). Normal : le mail est livré sans ce contenu |
+| Relais : `au-delà de la limite de l'API, seule sa description est enregistrée` | Pièce jointe de plus de 5 Mo (`max_attachment_size`). Normal : le mail est livré sans ce contenu |
 | Relais : `API (message) injoignable : …` | Hébergement en panne, DNS ou certificat : le relais réessaie tout seul |
 | Relais : `supprimé de Mailpit avant d'avoir été relayé` | Mail supprimé avant d'être relayé (à la main, ou par `MP_MAX_MESSAGES` / `MP_MAX_AGE`) : il ne peut plus être envoyé |
 | Relais : `Mailpit … : HTTP 400` sur la recherche | Filtre `RELAY_QUERY` mal écrit (syntaxe de recherche de Mailpit) |

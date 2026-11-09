@@ -5,7 +5,8 @@ declare(strict_types=1);
 namespace App\Persistence;
 
 use App\Mailpit\Message;
-use App\Mailpit\Part;
+use DateTimeImmutable;
+use DateTimeZone;
 use PDO;
 use Throwable;
 
@@ -71,9 +72,8 @@ final readonly class MessageRepository
         string $sourceIp,
         string $payload,
         int $maxPartSize,
-        int $maxRawSize,
     ): array {
-        return $this->transaction(function (PDO $pdo) use ($message, $label, $sourceIp, $payload, $maxPartSize, $maxRawSize): array {
+        return $this->transaction(function (PDO $pdo) use ($message, $label, $sourceIp, $payload, $maxPartSize): array {
             $statement = $pdo->prepare(self::UPSERT_MESSAGE);
             $statement->execute([
                 'mailpit_id'    => $message->id,
@@ -117,7 +117,6 @@ final readonly class MessageRepository
 
             $insertPart = $pdo->prepare(self::UPSERT_PART);
             foreach ($message->parts as $part) {
-                $limit = $part->kind === Part::KIND_RAW ? $maxRawSize : $maxPartSize;
                 $insertPart->execute([
                     'message_id'   => $messagePk,
                     'part_id'      => $part->partId,
@@ -126,7 +125,7 @@ final readonly class MessageRepository
                     'content_type' => $part->contentType,
                     'content_id'   => $part->contentId,
                     'size'         => $part->size,
-                    'status'       => $part->size > $limit ? 'too_large' : 'pending',
+                    'status'       => $part->size > $maxPartSize ? 'too_large' : 'pending',
                 ]);
             }
 
@@ -173,10 +172,6 @@ final readonly class MessageRepository
                 WHERE message_id = ? AND part_id = ?
                 SQL)->execute([$size, $sha256, $path, $messagePk, $partId]);
 
-            if ($partId === Part::RAW_ID) {
-                $pdo->prepare('UPDATE mailpit_messages SET raw_file = ? WHERE id = ?')->execute([$path, $messagePk]);
-            }
-
             return $this->refreshCompletion($pdo, $messagePk);
         });
     }
@@ -186,7 +181,7 @@ final readonly class MessageRepository
      * Leurs lignes de mailpit_parts partent avec eux (ON DELETE CASCADE).
      * Au plus $batch mails par appel : une grosse purge se fait en plusieurs fois.
      *
-     * @return list<array{mailpit_id: string, raw_file: ?string}> mails supprimés, pour effacer leurs fichiers
+     * @return list<string> ID Mailpit des mails supprimés, pour effacer leurs fichiers
      */
     public function prune(int $keep, int $batch = 200): array
     {
@@ -204,7 +199,7 @@ final readonly class MessageRepository
                 return [];
             }
 
-            $select = $pdo->prepare('SELECT id, mailpit_id, raw_file FROM mailpit_messages WHERE id <= ? ORDER BY id LIMIT ? FOR UPDATE');
+            $select = $pdo->prepare('SELECT id, mailpit_id FROM mailpit_messages WHERE id <= ? ORDER BY id LIMIT ? FOR UPDATE');
             $select->bindValue(1, (int) $maxId, PDO::PARAM_INT);
             $select->bindValue(2, $batch, PDO::PARAM_INT);
             $select->execute();
@@ -217,11 +212,84 @@ final readonly class MessageRepository
             $placeholders = implode(',', array_fill(0, count($ids), '?'));
             $pdo->prepare("DELETE FROM mailpit_messages WHERE id IN ($placeholders)")->execute($ids);
 
-            return array_map(static fn (array $row): array => [
-                'mailpit_id' => (string) $row['mailpit_id'],
-                'raw_file'   => $row['raw_file'] === null ? null : (string) $row['raw_file'],
-            ], $rows);
+            return array_map(static fn (array $row): string => (string) $row['mailpit_id'], $rows);
         });
+    }
+
+    /**
+     * Liste des messages, du plus récent au plus ancien (date de réception par Mailpit),
+     * avec la description de leurs pièces. Sans le corps ni les en-têtes, pour rester léger.
+     *
+     * @return array{total: int, messages: list<array<string, mixed>>}
+     */
+    public function list(int $limit, int $offset): array
+    {
+        $pdo = $this->database->pdo();
+        $total = (int) $pdo->query('SELECT COUNT(*) FROM mailpit_messages')->fetchColumn();
+
+        $statement = $pdo->prepare(<<<'SQL'
+            SELECT id, mailpit_id, message_id, from_name, from_address, to_addresses, cc_addresses,
+                   bcc_addresses, reply_to, subject, snippet, return_path, message_date, tags, size,
+                   attachments, smtp_username, mailpit_label, created_at, received_at, completed_at
+            FROM mailpit_messages
+            ORDER BY created_at DESC, id DESC
+            LIMIT ? OFFSET ?
+            SQL);
+        $statement->bindValue(1, $limit, PDO::PARAM_INT);
+        $statement->bindValue(2, $offset, PDO::PARAM_INT);
+        $statement->execute();
+        $rows = $statement->fetchAll();
+
+        $parts = [];
+        if ($rows !== []) {
+            $ids = array_map(static fn (array $row): int => (int) $row['id'], $rows);
+            $placeholders = implode(',', array_fill(0, count($ids), '?'));
+            $partStatement = $pdo->prepare(<<<SQL
+                SELECT message_id, part_id, kind, file_name, content_type, content_id, size, status
+                FROM mailpit_parts
+                WHERE message_id IN ($placeholders)
+                ORDER BY id
+                SQL);
+            $partStatement->execute($ids);
+            foreach ($partStatement->fetchAll() as $part) {
+                $parts[(int) $part['message_id']][] = [
+                    'part_id'      => (string) $part['part_id'],
+                    'kind'         => (string) $part['kind'],
+                    'file_name'    => (string) $part['file_name'],
+                    'content_type' => (string) $part['content_type'],
+                    'content_id'   => (string) $part['content_id'],
+                    'size'         => (int) $part['size'],
+                    'status'       => (string) $part['status'],
+                ];
+            }
+        }
+
+        $messages = array_map(static fn (array $row): array => [
+            'id'          => (string) $row['mailpit_id'],
+            'message_id'  => (string) $row['message_id'],
+            'from'        => $row['from_address'] === '' && $row['from_name'] === ''
+                ? null
+                : ['name' => (string) $row['from_name'], 'address' => (string) $row['from_address']],
+            'to'          => self::decode($row['to_addresses']),
+            'cc'          => self::decode($row['cc_addresses']),
+            'bcc'         => self::decode($row['bcc_addresses']),
+            'reply_to'    => self::decode($row['reply_to']),
+            'subject'     => (string) $row['subject'],
+            'snippet'     => (string) $row['snippet'],
+            'return_path' => (string) $row['return_path'],
+            'tags'        => self::decode($row['tags']),
+            'size'        => (int) $row['size'],
+            'attachments' => (int) $row['attachments'],
+            'username'    => $row['smtp_username'],
+            'label'       => $row['mailpit_label'],
+            'date'        => self::isoDate($row['message_date']),
+            'created_at'  => self::isoDate($row['created_at']),
+            'received_at' => self::isoDate($row['received_at']),
+            'complete'    => $row['completed_at'] !== null,
+            'parts'       => $parts[(int) $row['id']] ?? [],
+        ], $rows);
+
+        return ['total' => $total, 'messages' => $messages];
     }
 
     /** @return array{complete: bool, missing: list<string>, too_large: list<string>} */
@@ -278,6 +346,24 @@ final readonly class MessageRepository
             }
             throw $e;
         }
+    }
+
+    /** @return array<mixed> */
+    private static function decode(?string $json): array
+    {
+        $value = $json === null ? null : json_decode($json, true);
+
+        return is_array($value) ? $value : [];
+    }
+
+    /** Date UTC de la base (« 2026-11-08 22:10:33.809000 ») au format ISO 8601 (« 2026-11-08T22:10:33.809Z »). */
+    private static function isoDate(?string $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        return new DateTimeImmutable($value, new DateTimeZone('UTC'))->format('Y-m-d\TH:i:s.v\Z');
     }
 
     private static function cut(string $value, int $length): string

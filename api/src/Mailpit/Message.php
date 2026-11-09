@@ -9,7 +9,7 @@ use DateTimeZone;
 use Exception;
 
 /**
- * Message reçu sur POST /hook/mailpit.
+ * Message reçu sur POST /v1/messages.
  *
  * Envoyé directement par le webhook de Mailpit, c'est un simple résumé (MessageSummary). Exemple :
  * {

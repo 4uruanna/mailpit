@@ -4,7 +4,8 @@ declare(strict_types=1);
 
 namespace App;
 
-use App\Action\MailpitWebhookAction;
+use App\Action\CreateMessageAction;
+use App\Action\ListMessagesAction;
 use App\Action\UploadPartAction;
 use App\Http\ClientIpResolver;
 use App\Http\ErrorHandler;
@@ -40,27 +41,25 @@ final class Kernel
         $repository = new MessageRepository(new Database($settings->db));
 
         $files = new FileStore($settings->storageDir);
-        $hook = new MailpitWebhookAction(
+        $create = new CreateMessageAction(
             $repository,
             $files,
             $responseFactory,
             $settings->maxBodySize,
             $settings->maxPartSize,
-            $settings->maxRawSize,
             $settings->maxMessages,
         );
-        $upload = new UploadPartAction(
-            $repository,
-            $files,
-            $responseFactory,
-            $settings->maxPartSize,
-            $settings->maxRawSize,
-        );
+        $upload = new UploadPartAction($repository, $files, $responseFactory, $settings->maxPartSize);
+        $list = new ListMessagesAction($repository, $responseFactory);
 
-        // Toutes les routes du webhook exigent le jeton (vérifié avant la lecture du corps).
-        $app->group('/hook/mailpit', function (RouteCollectorProxy $group) use ($hook, $upload): void {
-            $group->post('', $hook);
-            $group->put('/{id}/parts/{partId}', $upload);
+        // Toutes les routes exigent le jeton (vérifié avant la lecture du corps).
+        //   POST /v1/messages                     le mail (JSON)
+        //   POST /v1/messages/{id}/part/{partId}  le contenu d'une pièce jointe
+        //   GET  /v1/messages                     la liste des mails enregistrés
+        $app->group('/v1/messages', function (RouteCollectorProxy $group) use ($create, $upload, $list): void {
+            $group->post('', $create);
+            $group->get('', $list);
+            $group->post('/{id}/part/{partId}', $upload);
         })->add(new TokenAuthMiddleware($settings->token, $responseFactory));
 
         // Filtre IP global : exécuté avant le routage, toute requête d'une IP

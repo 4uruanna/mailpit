@@ -29,6 +29,10 @@ try {
     exit(1);
 }
 
+if (getenv('RELAY_INCLUDE_RAW') !== false) {
+    Log::warning('RELAY_INCLUDE_RAW n\'existe plus (les .eml ne sont plus envoyés) : retirez-la de relay.env');
+}
+
 // Un seul relais à la fois : sinon deux processus enverraient des mails à l'API en même temps.
 // Le verrou est une socket Unix « abstraite » (sans fichier : le conteneur est en lecture seule),
 // libérée automatiquement à la fin du processus.

@@ -78,10 +78,8 @@ Attendu : des lignes `Address: …`, puis `OK`.
 ## Étape 2 — Récupérer le code du relais
 
 ```bash
-sudo git clone -b dev https://github.com/4uruanna/mailpit.git /opt/mailpit-src
+sudo git clone https://github.com/4uruanna/mailpit.git /opt/mailpit-src
 ```
-
-> ℹ️ `-b dev` : le code du relais est pour l'instant sur la branche `dev`. La branche par défaut (`main`) ne le contient pas encore : sans `-b dev`, le dossier `relay/` serait absent et l'étape 3 échouerait. Une fois `dev` fusionnée dans `main`, l'option devient inutile.
 
 > 💡 Si le dépôt est privé, copiez simplement le dossier depuis votre ordinateur :
 > `scp -r relay utilisateur@IP_DU_SERVEUR:/tmp/relay`, puis sur le serveur :

@@ -20,5 +20,5 @@
         <input type="password" id="password" name="password" autocomplete="current-password" required>
         <p><button type="submit">Se connecter</button></p>
     </form>
-    <p class="muted">3 essais par identifiant toutes les 30 minutes.</p>
+    <p class="muted">Toutes les 30 minutes : 3 essais par identifiant, et 10 au total depuis votre adresse.</p>
 </div>

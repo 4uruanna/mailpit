@@ -85,14 +85,17 @@ CREATE TABLE IF NOT EXISTS mailpit_admins (
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_0900_ai_ci;
 
--- Échecs de connexion au Dashboard : au plus 3 par identifiant sur 30 minutes.
+-- Échecs de connexion au Dashboard, sur 30 minutes : au plus 3 par identifiant depuis une même
+-- adresse, et 10 par adresse tous identifiants confondus (IPv6 : par préfixe /64).
 CREATE TABLE IF NOT EXISTS mailpit_login_attempts (
     id           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     username     VARCHAR(255)    NOT NULL COMMENT 'Identifiant saisi, en minuscules (même s''il n''existe pas)',
     ip           VARCHAR(45)     NOT NULL,
+    ip_key       VARCHAR(45)     NOT NULL COMMENT 'Adresse comptée : IPv4 exacte, ou préfixe /64 d''une IPv6',
     attempted_at DATETIME(6)     NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
     PRIMARY KEY (id),
-    KEY idx_username_date (username, attempted_at),
+    KEY idx_ip_key_date (ip_key, attempted_at),
+    KEY idx_username_ip_key_date (username, ip_key, attempted_at),
     KEY idx_attempted_at (attempted_at)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4

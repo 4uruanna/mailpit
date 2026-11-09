@@ -515,6 +515,7 @@ Notez ici chaque écart constaté et sa correction, au fil des essais.
 |---|---|---|---|
 | 2026-11-09 | 0.1 | Mailpit tourne, `swaks` → `250`, l'API locale renvoie `"Subject":"Phase 0"` | — |
 | 2026-11-09 | 0.2 | IPv4 fixe. IPv6 = adresse temporaire (change régulièrement) | Seule l'IPv4 dans `allowed_ips`. Tous les `curl` vers l'API passent en `curl -4` |
+| 2026-11-09 | 1.2 | `schema.sql` importé (seul fichier SQL depuis le retrait des upgrades), tables visibles, MySQL 8.4 | — |
 
 ---
 

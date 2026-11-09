@@ -528,6 +528,7 @@ Notez ici chaque écart constaté et sa correction, au fil des essais.
 | 2026-11-09 | 2.5 | Lignes `mailpit_messages` / `mailpit_parts` et fichier `part-2` conformes. Nettoyage fait | — |
 | 2026-11-09 | 2.6 | Pièce de 5 Mo : `201 stored`, `complete: true`, envoyée en 1 s | — |
 | 2026-11-09 | 3.1 | Build de l'image : `DNS: transient error`. ufw est en `deny (routed)` : rien ne sort des conteneurs, même vers `1.1.1.1` | `ufw route allow from 10.88.0.0/16` et `from 10.89.0.0/16`. Partie 7 complétée : règles ufw (étape 1), sous-réseau fixe `10.89.25.0/24` et règle SMTP entrante (étape 4) |
+| 2026-11-09 | 3.2 | Relais démarré, mais `Mailpit /api/v1/search : Resolving timed out` en boucle. `UFW BLOCK` des requêtes du relais vers `10.89.25.1:53` (DNS interne `aardvark-dns`, filtré comme trafic entrant) | `ufw allow` UDP et TCP 53 de `10.89.25.0/24` vers `10.89.25.1`. Ajouté à la Partie 7, étape 1 |
 
 ---
 

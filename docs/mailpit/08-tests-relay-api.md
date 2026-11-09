@@ -26,7 +26,7 @@ Chaque étape indique **où** la faire :
 
 - [x] [Phase 0](#phase-0--point-de-départ) — Point de départ : Mailpit reçoit des mails
 - [x] [Phase 1](#phase-1--lapi-est-en-ligne) — L'API est en ligne et protégée
-- [ ] [Phase 2](#phase-2--lapi-répond-au-serveur-mailpit) — L'API répond au serveur Mailpit
+- [x] [Phase 2](#phase-2--lapi-répond-au-serveur-mailpit) — L'API répond au serveur Mailpit
 - [ ] [Phase 3](#phase-3--le-relais-démarre) — Le relais démarre
 - [ ] [Phase 4](#phase-4--le-trajet-complet) — Le trajet complet : un mail arrive dans l'API
 - [ ] [Phase 5](#phase-5--les-pannes) — Les pannes : aucun mail perdu
@@ -526,6 +526,7 @@ Notez ici chaque écart constaté et sa correction, au fil des essais.
 | 2026-11-09 | 2.3 | IPv4 `200`, IPv6 `403`. L'API a une IPv6 (OVH), le serveur sait la joindre | Comportement voulu : seule l'IPv4 est autorisée |
 | 2026-11-09 | 2.4 | Mail `201 created` (`missing: ["2"]`), pièce `201 stored` (`complete: true`), renvoi `200 duplicate` | — |
 | 2026-11-09 | 2.5 | Lignes `mailpit_messages` / `mailpit_parts` et fichier `part-2` conformes. Nettoyage fait | — |
+| 2026-11-09 | 2.6 | Pièce de 5 Mo : `201 stored`, `complete: true`, envoyée en 1 s | — |
 
 ---
 

@@ -13,7 +13,7 @@ relais (serveur Mailpit) ── 1. POST /v1/messages                     mail en
         Bearer <jeton>  ── 2. POST /v1/messages/{id}/part/{partId}   une requête par pièce ──► var/messages/{id}/…
                         ◄── réponse : "complete": true quand tout est enregistré  + table mailpit_parts
 
-développeurs ── GET /v1/messages, GET /v1/addresses…    jeton « mpt_… » créé dans le Dashboard
+développeurs ── GET /v1/messages, GET /v1/messages/{id}…  jeton « mpt_… » créé dans le Dashboard
 administrateurs ── https://api.amnesic.dev/v1/app/signin  Dashboard (identifiant + mot de passe)
 ```
 
@@ -21,7 +21,7 @@ Trois sortes d'accès :
 
 | Qui | Comment | Peut |
 |---|---|---|
-| **Relais** | IP dans `webhook.allowed_ips` (sinon `403`) **et** jeton `webhook.token` (sinon `401`). Ce jeton est configuré des deux côtés : dans `config.php` ici, et dans `RELAY_API_TOKEN` côté relais | **Seul** à pouvoir envoyer des mails (`POST`). Peut aussi lister tous les mails (`GET /v1/messages`) |
+| **Relais** | IP dans `webhook.allowed_ips` (sinon `403`) **et** jeton `webhook.token` (sinon `401`). Ce jeton est configuré des deux côtés : dans `config.php` ici, et dans `RELAY_API_TOKEN` côté relais | **Seul** à pouvoir envoyer des mails (`POST`). Peut aussi lire tous les mails (`GET /v1/messages` et `GET /v1/messages/{id}`) |
 | **Développeurs** | Jeton `mpt_…` créé dans le Dashboard, depuis n'importe quelle IP | Lire et supprimer les mails des adresses associées à son jeton |
 | **Administrateurs** | Identifiant et mot de passe (table `mailpit_admins`), depuis n'importe quelle IP. Sur 30 minutes : 3 essais par identifiant depuis une même adresse, 10 par adresse tous identifiants confondus | Voir tous les mails, créer et supprimer les jetons, leur associer des adresses |
 
@@ -77,14 +77,15 @@ Elles exigent un jeton développeur, créé dans le Dashboard : en-tête `Author
 
 | Méthode | URL | Réponse |
 |---|---|---|
-| `GET` | `/v1/messages` | Les mails de ses adresses, du plus récent au plus ancien, **avec leur corps** (texte et HTML). 5 par défaut.<br>Paramètres : `address`, `limit` (25 au maximum), `offset` ou `page`.<br>`200 {"total":…, "count":…, "limit":5, "offset":0, "page":1, "messages":[…]}`<br>`400` paramètre invalide · `403` adresse non associée au jeton |
+| `GET` | `/v1/messages` | Les mails de ses adresses, du plus récent au plus ancien, en **résumé** (adresses, sujet, extrait, dates, pièces jointes), **sans leur corps**. 5 par défaut.<br>Paramètres : `address`, `limit` (25 au maximum), `offset` ou `page`.<br>`200 {"total":…, "count":…, "limit":5, "offset":0, "page":1, "messages":[…]}`<br>`400` paramètre invalide · `403` adresse non associée au jeton |
+| `GET` | `/v1/messages/{id}` | Un mail **complet** : les champs de la liste, plus son corps (`text`, `html`) et ses en-têtes (`headers`).<br>`200 {"id":"…", …, "text":"…", "html":"…", "headers":{…}}` · `404` mail inconnu, ou reçu par aucune de ses adresses |
 | `DELETE` | `/v1/messages/{id}` | Supprime ce mail.<br>`200 {"id":"…", "deleted":true}` · `404` mail inconnu, ou reçu par aucune de ses adresses |
 | `GET` | `/v1/addresses` | Ses adresses et leur nombre de mails.<br>`200 {"count":2, "addresses":[{"address":"alice@test.mondomaine.fr", "messages":3}, …]}` |
 | `DELETE` | `/v1/addresses?address=…` | Supprime tous les mails reçus par cette adresse (elle reste associée au jeton).<br>`200 {"address":"…", "deleted":3}` · `400` `address` absent · `403` adresse non associée au jeton |
 
 Pour toutes : `401` jeton absent, inconnu ou supprimé.
 
-`GET /v1/messages` accepte aussi le **jeton du relais**, depuis les IP de `webhook.allowed_ips` uniquement (sinon `403`) : il voit alors tous les mails. Pratique pour les tests depuis le serveur Mailpit ([Partie 8](../docs/mailpit/08-tests-relay-api.md)).
+`GET /v1/messages` et `GET /v1/messages/{id}` acceptent aussi le **jeton du relais**, depuis les IP de `webhook.allowed_ips` uniquement (sinon `403`) : il voit alors tous les mails. Pratique pour les tests depuis le serveur Mailpit ([Partie 8](../docs/mailpit/08-tests-relay-api.md)).
 
 ### Dashboard
 
@@ -254,13 +255,16 @@ curl -4 -i -X POST 'https://api.amnesic.dev/v1/messages/test-manuel-1/part/2' \
   --data-binary @/tmp/test.txt
 ```
 
-Réponse attendue : `HTTP/2 201` et `"complete":true`. Le fichier est dans `var/messages/test-manuel-1/part-2`. Supprimez ensuite la ligne de test dans phpMyAdmin (sa pièce est supprimée avec elle) et le dossier `var/messages/test-manuel-1/` par FTP.
+Réponse attendue : `HTTP/2 201` et `"complete":true`. Le fichier est dans `var/messages/test-manuel-1/part-2`.
 
-Puis la liste :
+Puis la liste (résumés, sans le corps), et le mail complet (corps, en-têtes) :
 
 ```bash
 curl -4 -s 'https://api.amnesic.dev/v1/messages' -H 'Authorization: Bearer LE_JETON_DE_CONFIG_PHP'
+curl -4 -s 'https://api.amnesic.dev/v1/messages/test-manuel-1' -H 'Authorization: Bearer LE_JETON_DE_CONFIG_PHP'
 ```
+
+Supprimez ensuite la ligne de test dans phpMyAdmin (sa pièce est supprimée avec elle) et le dossier `var/messages/test-manuel-1/` par FTP.
 
 **Pièce jointe de 5 Mo** : l'hébergement doit accepter des requêtes `POST` de cette taille (réglage PHP `post_max_size`, plus élevé que 5 Mo sur les hébergements OVH). Pour vérifier, recommencez le test ci-dessus avec un fichier de 5 Mo (`head -c 5242880 /dev/urandom > /tmp/test.txt`) et `"Size":5242880` dans le `POST`.
 
@@ -304,8 +308,8 @@ Les tests **PHPUnit** vérifient le code sur votre ordinateur, sans rien déploy
 | Suite | Dossier | Ce qui est testé | Base MySQL |
 |---|---|---|---|
 | `unit` | `tests/Unit/` | classes sans base : filtre IP (`IpMatcher`, `ClientIpResolver`), adresses, validation du JSON des mails et des pièces (chaque erreur `422`), configuration (`Settings`), HTTPS (`HttpsDetector` : `HTTPS`, port 443, `X-Forwarded-Proto` d'un proxy de confiance ; `ForceHttpsMiddleware` : `301`, `403`, HSTS), filtres du Dashboard, jetons (`ApiScope`, `Authorization: Bearer`, jeton du relais refusé dans l'URL et avertissement sans sa valeur), adresse comptée par la limite de connexion (`LoginThrottle::ipKey`) | non |
-| `integration` | `tests/Integration/` | accès à la base : mails, pièces, purge, liste par adresse, suppression, jetons développeurs, limite de connexion au Dashboard (par identifiant et adresse, plafond par adresse, IPv6 par `/64`) | oui |
-| `http` | `tests/Http/` | l'application complète (`Kernel::create`) avec de fausses requêtes : routes du relais (`403`, `401`, `401` avec `?token=…`, `415`, `400`, `413`, `422`, `201`, `200`), envoi des pièces jusqu'à `"complete": true`, routes des développeurs, Dashboard (redirection vers la connexion, refus sans jeton anti-CSRF, messages de blocage, cookie de session `Secure`, exemple `curl` de la page du jeton en `https://` derrière le frontal OVH), requêtes en clair (`301`, `403` sans rien enregistrer, proxy de confiance, `force_https` désactivé) | oui |
+| `integration` | `tests/Integration/` | accès à la base : mails, pièces, purge, liste par adresse (sans corps), mail complet limité aux adresses d'un jeton, suppression, jetons développeurs, limite de connexion au Dashboard (par identifiant et adresse, plafond par adresse, IPv6 par `/64`) | oui |
+| `http` | `tests/Http/` | l'application complète (`Kernel::create`) avec de fausses requêtes : routes du relais (`403`, `401`, `401` avec `?token=…`, `415`, `400`, `413`, `422`, `201`, `200`), envoi des pièces jusqu'à `"complete": true`, routes des développeurs (liste sans corps, mail complet par son ID, `404` hors des adresses du jeton, jeton du relais selon l'IP), Dashboard (redirection vers la connexion, refus sans jeton anti-CSRF, messages de blocage, cookie de session `Secure`, exemple `curl` de la page du jeton en `https://` derrière le frontal OVH), requêtes en clair (`301`, `403` sans rien enregistrer, proxy de confiance, `force_https` désactivé) | oui |
 
 **Prérequis** : PHP 8.4 minimum avec `pdo_mysql` et `mbstring`, Composer, et une base MySQL **de test** (8.4 comme l'hébergement ; 8.0.19 minimum).
 
@@ -384,6 +388,9 @@ Les pièces jointes des tests sont écrites dans un dossier temporaire, supprim�
 | Jeton développeur : `401` | Jeton faux, supprimé, ou envoyé ailleurs que dans l'en-tête `Authorization: Bearer …` (`[api-auth] …` dans `var/log/api.log`) |
 | Jeton développeur : `"total": 0` alors que des mails existent | Aucune adresse associée au jeton, ou l'adresse ne correspond à aucun destinataire `To` / `Cc` / `Bcc` |
 | Jeton développeur : `403` | `?address=` désigne une adresse qui n'est pas associée au jeton |
+| Jeton développeur : `404` sur `/v1/messages/{id}` | Mail reçu par aucune des adresses du jeton, déjà supprimé (rétention, `DELETE`), ou ID mal copié : c'est le champ `id` de la liste, pas `message_id` |
+| `405` sur `GET /v1/messages/{id}` | L'API en ligne est une version précédente, sans cette route (seul `DELETE` existe à cette adresse) : renvoyez `src/` en FTP |
+| `GET /v1/messages` : plus de `text` ni de `html` | Normal : la liste ne donne que des résumés. Le corps et les en-têtes se lisent avec `GET /v1/messages/{id}` ([Lire un mail](#lire-un-mail--get-v1messagesid)) |
 
 Le fichier `var/log/api.log` n'est pas vidé automatiquement : supprimez-le de temps en temps par FTP.
 
@@ -454,7 +461,11 @@ Un développeur reçoit un jeton `mpt_…` et la liste des adresses de test qui 
 
 Le jeton voit les mails dont l'un des destinataires (`To`, `Cc` ou `Bcc`) est une de ses adresses. Les adresses sont comparées sans tenir compte des majuscules. Une adresse peut être associée à plusieurs jetons.
 
-### Lire les mails : `GET /v1/messages`
+### Lister les mails : `GET /v1/messages`
+
+La liste ne donne que des **résumés** : adresses, sujet, extrait (`snippet`), dates, tags et description des pièces jointes. Le corps d'un mail (texte et HTML, jusqu'à 16 Mo chacun) et ses en-têtes se lisent un mail à la fois, avec [`GET /v1/messages/{id}`](#lire-un-mail--get-v1messagesid) : une page de 25 mails complets pourrait dépasser la mémoire allouée à PHP sur l'hébergement.
+
+> ⚠️ Les versions précédentes renvoyaient `text` et `html` dans la liste. Un script qui les y lisait doit maintenant appeler `GET /v1/messages/{id}` avec l'`id` de chaque mail.
 
 | Paramètre | Défaut | Rôle |
 |---|---|---|
@@ -464,7 +475,7 @@ Le jeton voit les mails dont l'un des destinataires (`To`, `Cc` ou `Bcc`) est un
 | `page` | `1` | numéro de page, à la place d'`offset` : `offset = (page - 1) × limit`. Les deux ensemble : `400` |
 
 ```bash
-# Le dernier mail reçu par une adresse (ex. pour y lire un code de confirmation)
+# Le dernier mail reçu par une adresse : son résumé, et son « id » pour lire le mail complet
 curl -s 'https://api.amnesic.dev/v1/messages?address=essai@test.mondomaine.fr&limit=1' -H 'Authorization: Bearer mpt_…'
 
 # Les mails 26 à 50 de toutes les adresses du jeton
@@ -500,9 +511,7 @@ curl -s 'https://api.amnesic.dev/v1/messages?limit=25&page=2' -H 'Authorization:
       "parts": [
         { "part_id": "2", "kind": "attachment", "file_name": "devis.pdf", "content_type": "application/pdf",
           "content_id": "", "size": 1048576, "status": "stored" }
-      ],
-      "text": "Votre code de confirmation : 482913\n",
-      "html": "<p>Votre code de confirmation : <b>482913</b></p>"
+      ]
     }
   ]
 }
@@ -511,12 +520,45 @@ curl -s 'https://api.amnesic.dev/v1/messages?limit=25&page=2' -H 'Authorization:
 | Champ | Contenu |
 |---|---|
 | `total` | nombre de mails correspondants (toutes pages confondues) · `count` : nombre de mails dans cette réponse |
-| `id` | ID du mail dans Mailpit : c'est lui qu'attend `DELETE /v1/messages/{id}` |
+| `id` | ID du mail dans Mailpit : c'est lui qu'attendent `GET /v1/messages/{id}` et `DELETE /v1/messages/{id}` |
+| `snippet` | début du texte du mail (résumé calculé par Mailpit) : suffit parfois pour lire un code court |
 | `date` | en-tête `Date` du mail · `created_at` : réception par Mailpit · `received_at` : réception par l'API (UTC, ISO 8601) |
-| `text`, `html` | corps du mail, ou `null` pour un mail reçu par l'ancien webhook direct de Mailpit (résumé seulement) |
 | `complete` | `true` quand toutes les pièces attendues sont enregistrées |
 | `parts[].status` | `stored` (enregistrée), `pending` (pas encore reçue) ou `too_large` (au-delà de la limite, non enregistrée). Le contenu des pièces n'est pas téléchargeable par l'API |
 | `label`, `username` | en-tête `Mailpit-Label` (`RELAY_LABEL`) et utilisateur SMTP authentifié, ou `null` |
+
+### Lire un mail : `GET /v1/messages/{id}`
+
+Le mail complet, s'il a été reçu par l'une des adresses du jeton (`To`, `Cc` ou `Bcc`) : les mêmes champs que dans la liste, plus `text`, `html` et `headers`. Sinon `404`, comme pour un mail inconnu : l'API ne dit pas si un mail existe pour d'autres adresses.
+
+```bash
+# Ex. pour y lire un code de confirmation (l'« id » vient de la liste)
+curl -s 'https://api.amnesic.dev/v1/messages/2qGgGUqCw5N3mAOHzyFGoJ' -H 'Authorization: Bearer mpt_…'
+```
+
+```json
+{
+  "id": "2qGgGUqCw5N3mAOHzyFGoJ",
+  "message_id": "2CJGY3JTeKc0YxSLai06kR@mailpit",
+  "from": { "name": "Alice", "address": "alice@exemple.fr" },
+  "subject": "Votre code",
+  "snippet": "Votre code de confirmation : 482913",
+  "complete": true,
+  "parts": [ { "part_id": "2", "kind": "attachment", "file_name": "devis.pdf", "…": "…" } ],
+  "…": "… (tous les champs de la liste)",
+  "text": "Votre code de confirmation : 482913\n",
+  "html": "<p>Votre code de confirmation : <b>482913</b></p>",
+  "headers": { "Subject": [ "Votre code" ], "Content-Type": [ "multipart/mixed; boundary=…" ] }
+}
+```
+
+| Champ | Contenu |
+|---|---|
+| `text`, `html` | corps du mail, ou `null` pour un mail reçu par l'ancien webhook direct de Mailpit (résumé seulement) |
+| `headers` | en-têtes du mail : nom => liste de valeurs (`{}` si inconnus) |
+| `parts` | description des pièces, comme dans la liste : leur contenu n'est pas téléchargeable par l'API |
+
+> 💡 Dans un script : `ID=$(curl -s '…/v1/messages?address=…&limit=1' -H 'Authorization: Bearer mpt_…' | jq -r '.messages[0].id')`, puis `curl -s "…/v1/messages/$ID" …`.
 
 ### Ses adresses : `GET /v1/addresses`
 

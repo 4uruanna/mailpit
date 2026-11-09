@@ -173,19 +173,22 @@ final class MessageRepositoryTest extends DatabaseTestCase
         self::assertSame(4, $all['total']);
         // Du plus récent au plus ancien (date de réception par Mailpit, pas ordre d'arrivée).
         self::assertSame(['ab', 'b1', 'a1', 'a2'], array_column($all['messages'], 'id'));
+        // Résumés seulement : ni corps ni en-têtes.
         self::assertArrayNotHasKey('text', $all['messages'][0]);
+        self::assertArrayNotHasKey('html', $all['messages'][0]);
+        self::assertArrayNotHasKey('headers', $all['messages'][0]);
+        self::assertSame('Début du texte', $all['messages'][0]['snippet']);
 
         $alice = $this->repository->list(10, 0, ['alice@test.fr']);
         self::assertSame(3, $alice['total']);
         self::assertSame(['ab', 'a1', 'a2'], array_column($alice['messages'], 'id'));
 
-        $page = $this->repository->list(1, 1, ['alice@test.fr'], withBodies: true, oldestFirst: true);
+        $page = $this->repository->list(1, 1, ['alice@test.fr'], oldestFirst: true);
         self::assertSame(3, $page['total']);
         self::assertCount(1, $page['messages']);
         $message = $page['messages'][0];
         self::assertSame('a1', $message['id']);
-        self::assertSame('Texte de a1', $message['text']);
-        self::assertSame('<p>HTML de a1</p>', $message['html']);
+        self::assertArrayNotHasKey('text', $message);
         self::assertSame(['name' => 'Expéditeur', 'address' => 'sender@example.com'], $message['from']);
         self::assertSame([['name' => '', 'address' => 'alice@test.fr']], $message['to']);
         self::assertSame('2026-11-08T10:00:00.000Z', $message['created_at']);
@@ -253,6 +256,28 @@ final class MessageRepositoryTest extends DatabaseTestCase
         self::assertNotNull($message);
         self::assertTrue($message['complete']);
         self::assertSame('m1/part-2', $message['parts'][0]['storage_path']);
+        self::assertSame('Texte de m1', $message['text']);
+        self::assertSame('<p>HTML de m1</p>', $message['html']);
+        self::assertSame(['Subject' => ['Sujet m1']], $message['headers']);
         self::assertNull($this->repository->find('inconnu'));
+    }
+
+    public function testFindWithScope(): void
+    {
+        $payload = self::payload('m1', ['alice@test.fr'], [['2', 10]]);
+        $payload['Bcc'] = [['Name' => '', 'Address' => 'carol@test.fr']];
+        $this->save($payload);
+        $this->repository->markPartStored($this->pk('m1'), '2', 10, hash('sha256', 'x'), 'm1/part-2');
+
+        self::assertNull($this->repository->find('m1', ['bob@test.fr']), 'hors des adresses autorisées');
+        self::assertNull($this->repository->find('m1', []), 'aucune adresse autorisée');
+        self::assertNull($this->repository->find('inconnu', ['alice@test.fr']));
+
+        $message = $this->repository->find('m1', ['bob@test.fr', 'carol@test.fr'], withPath: false);
+        self::assertNotNull($message, 'destinataire en Bcc');
+        self::assertSame('m1', $message['id']);
+        self::assertSame('Texte de m1', $message['text']);
+        self::assertArrayNotHasKey('storage_path', $message['parts'][0]);
+        self::assertSame('stored', $message['parts'][0]['status']);
     }
 }

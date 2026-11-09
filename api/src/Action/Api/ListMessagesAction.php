@@ -13,8 +13,9 @@ use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 
 /**
- * GET /v1/messages : mails des adresses associées au jeton, du plus récent au plus ancien,
- * avec leur corps (texte et HTML) et la description de leurs pièces jointes.
+ * GET /v1/messages : mails des adresses associées au jeton, du plus récent au plus ancien.
+ * Résumés seulement (adresses, sujet, extrait, dates, description des pièces) : ni corps ni
+ * en-têtes, qui peuvent peser jusqu'à 16 Mo chacun. Le mail complet : GET /v1/messages/{id}.
  *
  * Paramètres facultatifs :
  *   address  une seule des adresses du jeton (sinon : toutes ses adresses)
@@ -25,7 +26,7 @@ use Psr\Http\Message\ServerRequestInterface;
  * Avec le jeton du relais (depuis les IP autorisées), tous les mails sont visibles.
  *
  * Réponse :
- *   200 {"total": 12, "count": 5, "limit": 5, "offset": 0, "page": 1, "messages": [ {…, "text": "…", "html": "…"} ]}
+ *   200 {"total": 12, "count": 5, "limit": 5, "offset": 0, "page": 1, "messages": [ {"id": "…", "snippet": "…", …} ]}
  *   400 paramètre invalide · 403 adresse non associée au jeton
  */
 final readonly class ListMessagesAction
@@ -81,7 +82,7 @@ final readonly class ListMessagesAction
             $addresses = [$address];
         }
 
-        $result = $this->repository->list($limit, $offset, $addresses, withBodies: true);
+        $result = $this->repository->list($limit, $offset, $addresses);
 
         return Json::response($this->responseFactory, 200, [
             'total'    => $result['total'],

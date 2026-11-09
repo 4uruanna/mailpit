@@ -69,6 +69,8 @@
 
 <h2>Utilisation</h2>
 <div class="card">
-    <p class="muted">Exemple : les 5 derniers mails d'une adresse.</p>
+    <p class="muted">Les 5 derniers mails d'une adresse : résumés seulement (sujet, extrait, pièces jointes…), sans le corps.</p>
     <code class="code secret">curl -s -H 'Authorization: Bearer <?= $e($plain ?? $token['hint'] . '…') ?>' '<?= $e($origin . $url('/v1/messages')) ?>?address=<?= $e(array_key_first($addresses) ?? 'adresse@exemple.fr') ?>'</code>
+    <p class="muted">Un mail complet (texte, HTML, en-têtes), avec l'<code>id</code> lu dans la liste.</p>
+    <code class="code secret">curl -s -H 'Authorization: Bearer <?= $e($plain ?? $token['hint'] . '…') ?>' '<?= $e($origin . $url('/v1/messages/')) ?>ID_DU_MAIL'</code>
 </div>

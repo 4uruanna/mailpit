@@ -10,7 +10,8 @@ use App\Tests\Support\TempDir;
 use Psr\Http\Message\ResponseInterface;
 
 /**
- * Routes des développeurs (jeton « mpt_… ») : GET /v1/messages, GET /v1/addresses, DELETE.
+ * Routes des développeurs (jeton « mpt_… ») : GET /v1/messages, GET /v1/messages/{id},
+ * GET /v1/addresses, DELETE.
  */
 final class DeveloperRoutesTest extends AppTestCase
 {
@@ -60,12 +61,67 @@ final class DeveloperRoutesTest extends AppTestCase
         self::assertSame(0, $data['offset']);
         self::assertSame(1, $data['page']);
         self::assertSame(['a2', 'ab', 'a1'], array_column($data['messages'], 'id'));
-        // Corps et pièces inclus, jamais le chemin des fichiers.
+        // Résumés : ni corps ni en-têtes ; les pièces sont décrites, jamais le chemin des fichiers.
         $a1 = $data['messages'][2];
-        self::assertSame('Texte de a1', $a1['text']);
-        self::assertSame('<p>HTML de a1</p>', $a1['html']);
+        self::assertSame('Sujet a1', $a1['subject']);
+        self::assertSame('Début du texte', $a1['snippet']);
+        self::assertTrue($a1['complete']);
+        foreach (['text', 'html', 'headers'] as $key) {
+            self::assertArrayNotHasKey($key, $a1);
+        }
         self::assertSame('stored', $a1['parts'][0]['status']);
         self::assertArrayNotHasKey('storage_path', $a1['parts'][0]);
+    }
+
+    public function testShowMessage(): void
+    {
+        $list = self::json($this->get('/v1/messages?limit=25'));
+        $response = $this->get('/v1/messages/a1');
+
+        self::assertSame(200, $response->getStatusCode());
+        $data = self::json($response);
+        // Les champs de la liste, plus le corps et les en-têtes.
+        $summary = $list['messages'][array_search('a1', array_column($list['messages'], 'id'), true)];
+        self::assertSame($summary, array_diff_key($data, array_flip(['text', 'html', 'headers'])));
+        self::assertSame('Texte de a1', $data['text']);
+        self::assertSame('<p>HTML de a1</p>', $data['html']);
+        self::assertSame(['Subject' => ['Sujet a1']], $data['headers']);
+        self::assertSame('fichier-2.txt', $data['parts'][0]['file_name']);
+        self::assertArrayNotHasKey('storage_path', $data['parts'][0]);
+        self::assertStringNotContainsString('part-2', (string) $response->getBody(), 'aucun chemin de fichier');
+
+        // Reçu aussi par une autre adresse : visible.
+        self::assertSame('ab', self::json($this->get('/v1/messages/ab'))['id']);
+    }
+
+    public function testShowMessageWithoutHeaders(): void
+    {
+        $payload = self::payload('nh', ['alice@test.fr']);
+        unset($payload['Headers'], $payload['HTML']);
+        $this->postMessage($payload);
+
+        $response = $this->get('/v1/messages/nh');
+        self::assertSame(200, $response->getStatusCode());
+        self::assertStringContainsString('"headers":{}', (string) $response->getBody(), 'toujours un objet JSON');
+        self::assertNull(self::json($response)['html']);
+    }
+
+    public function testShowMessageOutsideTheTokenAddresses(): void
+    {
+        // Même réponse pour un mail d'une autre adresse et un mail inconnu : son existence n'est pas révélée.
+        foreach (['b1', 'inconnu', 'id.invalide', str_repeat('a', 65)] as $id) {
+            $response = $this->get('/v1/messages/' . $id);
+            self::assertSame(404, $response->getStatusCode(), $id);
+            self::assertSame(['error' => 'mail inconnu'], self::json($response), $id);
+        }
+        self::assertSame(404, $this->get('/v1/messages/a1', $this->emptyToken)->getStatusCode(), 'jeton sans adresse');
+        self::assertSame(404, $this->get('/v1/messages/')->getStatusCode(), 'sans ID');
+
+        // Destinataire en Bcc seulement : visible.
+        $payload = self::payload('bcc', ['bob@test.fr']);
+        $payload['Bcc'] = [['Name' => '', 'Address' => 'carol@test.fr']];
+        $this->postMessage($payload);
+        self::assertSame(200, $this->get('/v1/messages/bcc')->getStatusCode());
     }
 
     public function testListPagination(): void
@@ -118,6 +174,8 @@ final class DeveloperRoutesTest extends AppTestCase
         self::assertSame('Bearer', $response->getHeaderLine('WWW-Authenticate'));
 
         self::assertSame(401, $this->get('/v1/messages', 'mpt_inconnu')->getStatusCode());
+        self::assertSame(401, $this->get('/v1/messages/a1', 'mpt_inconnu')->getStatusCode());
+        self::assertSame(401, $this->request('GET', '/v1/messages/a1', ip: self::OTHER_IP)->getStatusCode());
         self::assertSame(401, $this->get('/v1/addresses', 'mpt_inconnu')->getStatusCode());
         self::assertSame(401, $this->delete('/v1/messages/a1', 'mpt_inconnu')->getStatusCode());
         self::assertSame(401, $this->delete('/v1/addresses?address=alice@test.fr', 'mpt_inconnu')->getStatusCode());
@@ -131,11 +189,21 @@ final class DeveloperRoutesTest extends AppTestCase
         $data = self::json($this->get('/v1/messages?address=bob@test.fr', self::RELAY_TOKEN, self::RELAY_IP));
         self::assertSame(['ab', 'b1'], array_column($data['messages'], 'id'));
 
+        // Un mail complet, quelles que soient ses adresses.
+        $response = $this->get('/v1/messages/b1', self::RELAY_TOKEN, self::RELAY_IP);
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame('Texte de b1', self::json($response)['text']);
+        self::assertSame(404, $this->get('/v1/messages/inconnu', self::RELAY_TOKEN, self::RELAY_IP)->getStatusCode());
+
         $response = $this->get('/v1/messages', self::RELAY_TOKEN, self::OTHER_IP);
         self::assertSame(403, $response->getStatusCode());
+        $response = $this->get('/v1/messages/b1', self::RELAY_TOKEN, self::OTHER_IP);
+        self::assertSame(403, $response->getStatusCode());
+        self::assertSame(['error' => 'Forbidden'], self::json($response));
 
-        // Le jeton du relais ne sert qu'à la liste : pas aux autres routes des développeurs.
+        // Le jeton du relais ne sert qu'à la lecture des mails : pas aux autres routes des développeurs.
         self::assertSame(401, $this->get('/v1/addresses', self::RELAY_TOKEN, self::RELAY_IP)->getStatusCode());
+        self::assertSame(401, $this->delete('/v1/messages/b1', self::RELAY_TOKEN)->getStatusCode());
     }
 
     public function testAddresses(): void

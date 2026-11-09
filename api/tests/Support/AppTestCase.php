@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Tests\Support;
 
+use App\Http\WaitClock;
 use App\Kernel;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -27,6 +28,8 @@ abstract class AppTestCase extends DatabaseTestCase
 
     /** Dossier temporaire des pièces jointes (webhook.storage_dir). */
     protected string $storageDir = '';
+    /** Horloge de GET /v1/messages?wait=… ; null = horloge réelle. Lue à la création de l'application (app(), useConfig()). */
+    protected ?WaitClock $waitClock = null;
     private ?App $app = null;
 
     protected function setUp(): void
@@ -72,13 +75,13 @@ abstract class AppTestCase extends DatabaseTestCase
 
     protected function app(): App
     {
-        return $this->app ??= Kernel::create($this->config());
+        return $this->app ??= Kernel::create($this->config(), $this->waitClock);
     }
 
     /** Recrée l'application avec une autre configuration (ex. config() modifiée). */
     protected function useConfig(array $config): void
     {
-        $this->app = Kernel::create($config);
+        $this->app = Kernel::create($config, $this->waitClock);
     }
 
     /**

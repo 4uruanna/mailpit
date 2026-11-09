@@ -329,25 +329,25 @@ final readonly class MessageRepository
      * @param list<string>|null $addresses ne garde que les mails dont un destinataire (To, Cc, Bcc)
      *                                     est dans cette liste ; null = tous les mails
      * @param bool $oldestFirst du plus ancien au plus récent
+     * @param DateTimeImmutable|null $since ne garde que les mails reçus par Mailpit strictement
+     *                                      après cette date, à la milliseconde près (voir filter())
+     * @param bool $completeOnly ne garde que les mails complets (toutes les pièces reçues)
      * @return array{total: int, messages: list<array<string, mixed>>}
      */
-    public function list(int $limit, int $offset, ?array $addresses = null, bool $oldestFirst = false): array
-    {
+    public function list(
+        int $limit,
+        int $offset,
+        ?array $addresses = null,
+        bool $oldestFirst = false,
+        ?DateTimeImmutable $since = null,
+        bool $completeOnly = false,
+    ): array {
         if ($addresses === []) {
             return ['total' => 0, 'messages' => []];
         }
 
         $pdo = $this->database->pdo();
-
-        $where = '';
-        $params = [];
-        if ($addresses !== null) {
-            $where = sprintf(
-                'WHERE id IN (SELECT message_id FROM mailpit_message_recipients WHERE address IN (%s))',
-                implode(',', array_fill(0, count($addresses), '?')),
-            );
-            $params = array_values($addresses);
-        }
+        [$where, $params] = self::filter($addresses, $since, $completeOnly);
 
         $count = $pdo->prepare("SELECT COUNT(*) FROM mailpit_messages $where");
         $count->execute($params);
@@ -379,6 +379,66 @@ final readonly class MessageRepository
         );
 
         return ['total' => $total, 'messages' => $messages];
+    }
+
+    /**
+     * Au moins un mail correspond aux filtres de list() : requête légère (SELECT 1 … LIMIT 1),
+     * répétée chaque seconde par GET /v1/messages?wait=…
+     *
+     * @param list<string>|null $addresses
+     */
+    public function exists(?array $addresses = null, ?DateTimeImmutable $since = null, bool $completeOnly = false): bool
+    {
+        if ($addresses === []) {
+            return false;
+        }
+
+        [$where, $params] = self::filter($addresses, $since, $completeOnly);
+        // Hors transaction (autocommit) : chaque requête voit les mails enregistrés depuis la précédente.
+        $statement = $this->database->pdo()->prepare("SELECT 1 FROM mailpit_messages $where LIMIT 1");
+        $statement->execute($params);
+
+        return $statement->fetchColumn() !== false;
+    }
+
+    /**
+     * Clause WHERE commune à list() et exists().
+     *
+     * $since est comparé à la milliseconde près, comme les dates renvoyées par l'API
+     * (« 2026-11-08T22:10:33.809Z ») : created_at doit être au moins 1 ms après $since tronqué à la
+     * milliseconde. Un mail reçu à 22:10:33.809512 n'est donc pas « après » 22:10:33.809Z, sa propre
+     * date telle que l'API l'affiche.
+     *
+     * @param list<string>|null $addresses
+     * @return array{string, list<mixed>}
+     */
+    private static function filter(?array $addresses, ?DateTimeImmutable $since, bool $completeOnly): array
+    {
+        $conditions = [];
+        $params = [];
+        if ($addresses !== null) {
+            $conditions[] = sprintf(
+                'id IN (SELECT message_id FROM mailpit_message_recipients WHERE address IN (%s))',
+                implode(',', array_fill(0, count($addresses), '?')),
+            );
+            $params = array_values($addresses);
+        }
+        if ($since !== null) {
+            $since = $since->setTimezone(new DateTimeZone('UTC'));
+            $millisecond = $since->setTime(
+                (int) $since->format('G'),
+                (int) $since->format('i'),
+                (int) $since->format('s'),
+                intdiv((int) $since->format('u'), 1000) * 1000,
+            );
+            $conditions[] = 'created_at >= ?';
+            $params[] = $millisecond->modify('+1 msec')->format('Y-m-d H:i:s.u');
+        }
+        if ($completeOnly) {
+            $conditions[] = 'completed_at IS NOT NULL';
+        }
+
+        return [$conditions === [] ? '' : 'WHERE ' . implode(' AND ', $conditions), $params];
     }
 
     /**

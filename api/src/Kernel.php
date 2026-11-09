@@ -25,6 +25,8 @@ use App\Http\ClientIpResolver;
 use App\Http\ErrorHandler;
 use App\Http\HttpsDetector;
 use App\Http\IpMatcher;
+use App\Http\SystemWaitClock;
+use App\Http\WaitClock;
 use App\Log\LogRotator;
 use App\Middleware\ApiTokenMiddleware;
 use App\Middleware\DashboardMiddleware;
@@ -52,7 +54,10 @@ use Slim\Routing\RouteCollectorProxy;
  */
 final class Kernel
 {
-    public static function create(array $config): App
+    /**
+     * @param WaitClock|null $clock horloge de GET /v1/messages?wait=… (les tests en passent une fausse)
+     */
+    public static function create(array $config, ?WaitClock $clock = null): App
     {
         $settings = Settings::fromArray($config);
 
@@ -105,7 +110,7 @@ final class Kernel
         // (tous les mails, depuis les IP autorisées).
         $listAuth = new ApiTokenMiddleware($tokens, $responseFactory, $settings->token, $ipResolver, $relayIps);
 
-        $list = new ListMessagesAction($messages, $responseFactory);
+        $list = new ListMessagesAction($messages, $responseFactory, $clock ?? new SystemWaitClock());
         $show = new ShowMessageAction($messages, $responseFactory);
         $deleteMessage = new DeleteMessageAction($messages, $files, $responseFactory);
         $listAddresses = new ListAddressesAction($messages, $responseFactory);
@@ -123,7 +128,8 @@ final class Kernel
         //   POST   /v1/messages                     relais : le mail (JSON), puis nettoyage si c'est le moment
         //   POST   /v1/messages/{id}/part/{partId}  relais : le contenu d'une pièce jointe, puis nettoyage
         //   POST   /v1/health                       relais : ping de santé (toutes les 30 s), puis nettoyage
-        //   GET    /v1/messages                     jeton : résumés des mails de ses adresses (?address, limit, offset, page)
+        //   GET    /v1/messages                     jeton : résumés des mails de ses adresses (?address, limit, offset, page,
+        //                                           since ; wait : attend un mail complet, 60 s au plus)
         //   GET    /v1/messages/{id}                jeton : un mail complet (corps, en-têtes) de ses adresses
         //   DELETE /v1/messages/{id}                jeton : supprime un mail de ses adresses
         //   GET    /v1/addresses                    jeton : ses adresses

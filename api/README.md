@@ -84,7 +84,7 @@ Elles exigent un jeton développeur, créé dans le Dashboard : en-tête `Author
 
 | Méthode | URL | Réponse |
 |---|---|---|
-| `GET` | `/v1/messages` | Les mails de ses adresses, du plus récent au plus ancien, en **résumé** (adresses, sujet, extrait, dates, pièces jointes), **sans leur corps**. 5 par défaut.<br>Paramètres : `address`, `limit` (25 au maximum), `offset` ou `page`.<br>`200 {"total":…, "count":…, "limit":5, "offset":0, "page":1, "messages":[…]}`<br>`400` paramètre invalide · `403` adresse non associée au jeton |
+| `GET` | `/v1/messages` | Les mails de ses adresses, du plus récent au plus ancien, en **résumé** (adresses, sujet, extrait, dates, pièces jointes), **sans leur corps**. 5 par défaut.<br>Paramètres : `address`, `limit` (25 au maximum), `offset` ou `page`, `since` (reçus après cette date), `wait` (attendre un mail complet, 60 s au plus : voir [Attendre un mail](#attendre-un-mail--wait-et-since)).<br>`200 {"total":…, "count":…, "limit":5, "offset":0, "page":1, "messages":[…]}` (avec `wait` : plus `"waited_ms"`)<br>`400` paramètre invalide · `403` adresse non associée au jeton |
 | `GET` | `/v1/messages/{id}` | Un mail **complet** : les champs de la liste, plus son corps (`text`, `html`) et ses en-têtes (`headers`).<br>`200 {"id":"…", …, "text":"…", "html":"…", "headers":{…}}` · `404` mail inconnu, ou reçu par aucune de ses adresses |
 | `DELETE` | `/v1/messages/{id}` | Supprime ce mail.<br>`200 {"id":"…", "deleted":true}` · `404` mail inconnu, ou reçu par aucune de ses adresses |
 | `GET` | `/v1/addresses` | Ses adresses et leur nombre de mails.<br>`200 {"count":2, "addresses":[{"address":"alice@test.mondomaine.fr", "messages":3}, …]}` |
@@ -362,9 +362,9 @@ Les tests **PHPUnit** vérifient le code sur votre ordinateur, sans rien déploy
 
 | Suite | Dossier | Ce qui est testé | Base MySQL |
 |---|---|---|---|
-| `unit` | `tests/Unit/` | classes sans base : filtre IP (`IpMatcher`, `ClientIpResolver`), adresses, validation du JSON des mails et des pièces (chaque erreur `422`, champ `Truncated`), configuration (`Settings`), HTTPS (`HttpsDetector` : `HTTPS`, port 443, `X-Forwarded-Proto` d'un proxy de confiance ; `ForceHttpsMiddleware` : `301`, `403`, HSTS), filtres du Dashboard, pages d'erreur du Dashboard (`ErrorPage` : URL concernées, titres et messages selon le code, page minimale si le gabarit ne peut pas être rendu), jetons (`ApiScope`, `Authorization: Bearer`, jeton du relais refusé dans l'URL et avertissement sans sa valeur), page Statut (`HealthReport` : état connecté / déconnecté, créneaux de 5 minutes, disponibilité depuis le premier ping, coupures de plus de 90 s ; `LatencyChart` : graphique SVG, axes à l'heure du Dashboard, résumé accessible), adresse comptée par la limite de connexion (`LoginThrottle::ipKey`), rotation du log (`LogRotator` : seuil, archive remplacée, fichier absent, `log_file` à `null`, verrou pris, échec sans exception, requêtes simultanées dans plusieurs processus) | non |
-| `integration` | `tests/Integration/` | accès à la base : mails, pièces, version tronquée puis complète (et l'inverse), purge, suppression par âge (`created_at`), pièce d'un mail supprimé, nettoyage (`Maintenance` : mails trop anciens ou en trop, fichiers temporaires vieux ou récents, dossiers et fichiers sans ligne en base, au plus toutes les 15 minutes, verrou, erreur seulement écrite dans le log), liste par adresse (sans corps), mail complet limité aux adresses d'un jeton, suppression, jetons développeurs, limite de connexion au Dashboard (par identifiant et adresse, plafond par adresse, IPv6 par `/64`), pings de santé (`HealthRepository` : heures en UTC, ping précédent, purge) | oui |
-| `http` | `tests/Http/` | l'application complète (`Kernel::create`) avec de fausses requêtes : routes du relais (`403`, `401`, `401` avec `?token=…`, `415`, `400`, `413` avec `max_body_size`, corps vidé par PHP (`413` avec la limite effective), `422`, `201`, `200`, mail tronqué enregistré et exposé : `"truncated": true`), ping de santé (`POST /v1/health` : `403`, `401`, `415`, `413`, `400`, `422`, `200` et ligne enregistrée, pings de plus de 48 h supprimés, nettoyage lancé sans jamais faire échouer le ping), envoi des pièces jusqu'à `"complete": true`, routes des développeurs (liste sans corps, mail complet par son ID, `404` hors des adresses du jeton, jeton du relais selon l'IP), Dashboard (redirection vers la connexion, refus sans jeton anti-CSRF, messages de blocage, badge « tronqué », cookie de session `Secure`, exemple `curl` de la page du jeton en `https://` derrière le frontal OVH, pages d'erreur HTML `404` / `405` / `500` avec les en-têtes de sécurité, menu seulement si connecté, base injoignable, détail seulement avec `debug`, page **Statut** : « Aucun ping reçu », puis « Connecté », compteurs, graphique, coupure, rechargement automatique qui ne prolonge pas la session), erreurs de l'API toujours en JSON (`404`, `405`, `500`, `base_path`), requêtes en clair (`301`, `403` sans rien enregistrer, proxy de confiance, `force_https` désactivé), nettoyage après les requêtes acceptées du relais (et pas après les autres), pièce d'un mail supprimé pendant l'envoi (`404`, fichier effacé), rotation du log au démarrage d'une requête (et requête servie quand l'archivage échoue) | oui |
+| `unit` | `tests/Unit/` | classes sans base : filtre IP (`IpMatcher`, `ClientIpResolver`), adresses, validation du JSON des mails et des pièces (chaque erreur `422`, champ `Truncated`), configuration (`Settings`), HTTPS (`HttpsDetector` : `HTTPS`, port 443, `X-Forwarded-Proto` d'un proxy de confiance ; `ForceHttpsMiddleware` : `301`, `403`, HSTS), filtres du Dashboard, pages d'erreur du Dashboard (`ErrorPage` : URL concernées, titres et messages selon le code, page minimale si le gabarit ne peut pas être rendu), jetons (`ApiScope`, `Authorization: Bearer`, jeton du relais refusé dans l'URL et avertissement sans sa valeur), page Statut (`HealthReport` : état connecté / déconnecté, créneaux de 5 minutes, disponibilité depuis le premier ping, coupures de plus de 90 s ; `LatencyChart` : graphique SVG, axes à l'heure du Dashboard, résumé accessible), adresse comptée par la limite de connexion (`LoginThrottle::ipKey`), rotation du log (`LogRotator` : seuil, archive remplacée, fichier absent, `log_file` à `null`, verrou pris, échec sans exception, requêtes simultanées dans plusieurs processus), paramètres `since` (dates ISO 8601 acceptées et refusées) et `wait` (limite de durée de PHP), horloge de l'attente (`SystemWaitClock`) | non |
+| `integration` | `tests/Integration/` | accès à la base : mails, pièces, version tronquée puis complète (et l'inverse), purge, suppression par âge (`created_at`), pièce d'un mail supprimé, nettoyage (`Maintenance` : mails trop anciens ou en trop, fichiers temporaires vieux ou récents, dossiers et fichiers sans ligne en base, au plus toutes les 15 minutes, verrou, erreur seulement écrite dans le log), liste par adresse (sans corps), filtres `since` (strictement après, à la milliseconde) et « mails complets seulement », vérification légère `exists()`, mail complet limité aux adresses d'un jeton, suppression, jetons développeurs, limite de connexion au Dashboard (par identifiant et adresse, plafond par adresse, IPv6 par `/64`), pings de santé (`HealthRepository` : heures en UTC, ping précédent, purge) | oui |
+| `http` | `tests/Http/` | l'application complète (`Kernel::create`) avec de fausses requêtes : routes du relais (`403`, `401`, `401` avec `?token=…`, `415`, `400`, `413` avec `max_body_size`, corps vidé par PHP (`413` avec la limite effective), `422`, `201`, `200`, mail tronqué enregistré et exposé : `"truncated": true`), ping de santé (`POST /v1/health` : `403`, `401`, `415`, `413`, `400`, `422`, `200` et ligne enregistrée, pings de plus de 48 h supprimés, nettoyage lancé sans jamais faire échouer le ping), envoi des pièces jusqu'à `"complete": true`, routes des développeurs (liste sans corps, mail complet par son ID, `404` hors des adresses du jeton, jeton du relais selon l'IP), attente d'un mail (`?wait=` avec une fausse horloge : retour au bout du délai avec `"count": 0`, retour anticipé quand un mail arrive, mail incomplet ignoré jusqu'à sa dernière pièce, client parti, `since`, paramètres invalides, et une attente réelle d'une seconde), Dashboard (redirection vers la connexion, refus sans jeton anti-CSRF, messages de blocage, badge « tronqué », cookie de session `Secure`, exemples `curl` de la page du jeton (dont l'attente d'un mail) en `https://` derrière le frontal OVH, pages d'erreur HTML `404` / `405` / `500` avec les en-têtes de sécurité, menu seulement si connecté, base injoignable, détail seulement avec `debug`, page **Statut** : « Aucun ping reçu », puis « Connecté », compteurs, graphique, coupure, rechargement automatique qui ne prolonge pas la session), erreurs de l'API toujours en JSON (`404`, `405`, `500`, `base_path`), requêtes en clair (`301`, `403` sans rien enregistrer, proxy de confiance, `force_https` désactivé), nettoyage après les requêtes acceptées du relais (et pas après les autres), pièce d'un mail supprimé pendant l'envoi (`404`, fichier effacé), rotation du log au démarrage d'une requête (et requête servie quand l'archivage échoue) | oui |
 
 **Prérequis** : PHP 8.4 minimum avec `pdo_mysql` et `mbstring`, Composer, et une base MySQL **de test** (8.4 comme l'hébergement ; 8.0.19 minimum).
 
@@ -454,6 +454,9 @@ Les pièces jointes des tests sont écrites dans un dossier temporaire, supprim�
 | Page **Statut** : « Déconnecté depuis … » | Aucun ping depuis plus de 90 secondes : relais arrêté (`sudo systemctl status mailpit-relay`), serveur Mailpit éteint, réseau coupé, ou API en panne (`500` : voir `var/log/api.log`). Les mails attendent dans Mailpit et seront relayés au retour |
 | Relais : `ping de santé non enregistré : API : HTTP 404` dans son journal | L'API en ligne est une version précédente, sans `POST /v1/health` : renvoyez `src/` et `templates/` en FTP et importez la migration `2026-11-health-pings.sql`. Les mails sont relayés normalement en attendant |
 | Jeton développeur : `401` | Jeton faux, supprimé, ou envoyé ailleurs que dans l'en-tête `Authorization: Bearer …` (`[api-auth] …` dans `var/log/api.log`) |
+| `?wait=…` : `"count": 0` au bout du délai alors que le mail est dans Mailpit | Mail encore incomplet (pièces jointes en cours d'envoi par le relais : il apparaît sans `wait`, avec `"complete": false`), `since` après son `created_at` (horloges décalées : voir [Attendre un mail](#attendre-un-mail--wait-et-since)), autre adresse, ou relais en retard ou arrêté (page **Statut**) |
+| `?wait=…` : réponse immédiate, sans `waited_ms` | L'API en ligne est une version précédente, qui ignore `wait` et `since` : renvoyez `src/` en FTP |
+| `?wait=…` : coupure ou `504` avant la fin du délai | Délai trop court ailleurs : `--max-time` de `curl` (ou délai du client HTTP) inférieur à `wait`, ou proxy / CDN qui coupe avant 60 s. Réduisez `wait`, ou allongez ces délais |
 | Jeton développeur : `"total": 0` alors que des mails existent | Aucune adresse associée au jeton, ou l'adresse ne correspond à aucun destinataire `To` / `Cc` / `Bcc` |
 | Jeton développeur : `403` | `?address=` désigne une adresse qui n'est pas associée au jeton |
 | Jeton développeur : `404` sur `/v1/messages/{id}` | Mail reçu par aucune des adresses du jeton, déjà supprimé (rétention, `DELETE`), ou ID mal copié : c'est le champ `id` de la liste, pas `message_id` |
@@ -569,6 +572,8 @@ La liste ne donne que des **résumés** : adresses, sujet, extrait (`snippet`), 
 | `limit` | `5` | nombre de mails renvoyés (1 à 25) |
 | `offset` | `0` | nombre de mails à sauter |
 | `page` | `1` | numéro de page, à la place d'`offset` : `offset = (page - 1) × limit`. Les deux ensemble : `400` |
+| `since` | aucun | date ISO 8601 **avec fuseau** (`2026-11-09T14:03:00Z`, `2026-11-09T15:03:00.250+01:00`) : seulement les mails reçus par Mailpit **strictement après** (`created_at`, à la milliseconde près). Date invalide ou sans fuseau : `400` |
+| `wait` | aucun | 1 à 60 secondes : attendre qu'un mail **complet** arrive (voir [Attendre un mail](#attendre-un-mail--wait-et-since)). Hors de ces bornes : `400` |
 
 ```bash
 # Le dernier mail reçu par une adresse : son résumé, et son « id » pour lire le mail complet
@@ -624,6 +629,50 @@ curl -s 'https://api.amnesic.dev/v1/messages?limit=25&page=2' -H 'Authorization:
 | `truncated` | `true` si le relais a raccourci le mail, trop volumineux pour l'API (texte, HTML, voire en-têtes : voir [Mails trop volumineux](#mails-trop-volumineux--tronqués-par-le-relais)). Le mail complet n'est alors que dans Mailpit |
 | `parts[].status` | `stored` (enregistrée), `pending` (pas encore reçue) ou `too_large` (au-delà de la limite, non enregistrée). Le contenu des pièces n'est pas téléchargeable par l'API |
 | `label`, `username` | en-tête `Mailpit-Label` (`RELAY_LABEL`) et utilisateur SMTP authentifié, ou `null` |
+| `waited_ms` | seulement avec `wait` : durée de l'attente, en millisecondes (`0` : un mail correspondait déjà) |
+
+### Attendre un mail : `wait` et `since`
+
+Pour tester un envoi (inscription, mot de passe oublié…), le script n'a pas à interroger l'API en boucle : avec `wait`, **la réponse attend** qu'au moins un mail corresponde aux filtres (`address`, `since`), au plus `wait` secondes (60 au maximum). Avec `since`, seuls les mails arrivés **après** l'heure notée comptent : c'est ce qui permet d'attendre un **nouveau** mail.
+
+Le scénario type : noter l'heure, déclencher l'envoi, attendre.
+
+```bash
+JETON='mpt_…'
+ADRESSE='essai@test.mondomaine.fr'
+
+# 1. Noter l'heure (UTC), juste avant l'envoi
+DEPUIS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+# 2. Déclencher l'envoi (formulaire, appel à votre application…)
+
+# 3. Attendre le mail, 60 s au plus (--max-time : un peu plus que wait)
+curl -s --max-time 70 -H "Authorization: Bearer $JETON" \
+  "https://api.amnesic.dev/v1/messages?address=$ADRESSE&since=$DEPUIS&wait=60&limit=1"
+```
+
+La réponse a le format habituel, avec en plus `waited_ms` :
+
+| Cas | Réponse |
+|---|---|
+| Un mail est déjà là, ou arrive pendant l'attente | `200` dès la vérification suivante (une par seconde) : `"count": 1`, le mail dans `messages`. Lisez-le ensuite avec `GET /v1/messages/{id}` |
+| Rien n'arrive à temps | `200` au bout de `wait` secondes, avec `"total": 0`, `"count": 0` et `"messages": []` |
+| Paramètre invalide, adresse d'un autre jeton | `400`, `403` tout de suite, sans attendre |
+
+Règles :
+
+- **Seuls les mails complets comptent** (`"complete": true` : toutes les pièces jointes reçues par l'API). Le relais envoie un mail puis ses pièces, une par une : sans cette règle, la réponse pourrait arriver avant la pièce jointe attendue. Avec `wait`, la réponse elle-même ne contient que des mails complets (`total` compris). Sans `wait`, la liste montre aussi les mails incomplets, avec `"complete": false`.
+- `since` compare la date de **réception par Mailpit** (`created_at`), à la milliseconde près, comme les dates renvoyées par l'API : un mail n'est pas « après » son propre `created_at`. Pour attendre le mail suivant, `since` peut donc être le `created_at` du dernier mail lu.
+- L'attente porte sur les filtres (`address`, `since`), pas sur la page : avec `offset` ou `page`, la page renvoyée peut être vide.
+- Le jeton du relais peut aussi attendre (tous les mails, depuis les IP de `webhook.allowed_ips`).
+
+> ⚠️ `since` est comparé à l'horloge du **serveur Mailpit**. Si l'horloge de la machine qui lance le test avance, le mail peut sembler arrivé « avant » `since` et ne jamais être pris en compte. Dans le doute, prenez comme repère le `created_at` du mail le plus récent de l'adresse (`GET /v1/messages?address=…&limit=1`), avant l'envoi.
+
+> 💡 Dans une URL, un `+` devient une espace : écrivez le fuseau `%2B01:00`, ou utilisez `Z` (UTC). Un fuseau dont le `+` a été perdu en route (`2026-11-09T15:03:00 01:00`) est quand même accepté.
+
+> ⚠️ **Durée des requêtes.** Une requête avec `wait=60` dure jusqu'à 60 secondes. Si la limite de durée de PHP (`max_execution_time`) est plus courte, l'API la relève à `wait` + 30 secondes (`set_time_limit`). Sur l'hébergement mutualisé OVH, cette limite est déjà largement supérieure à 60 s. Derrière un proxy ou un CDN ([plus bas](#derrière-un-proxy-ou-un-cdn)), son délai d'attente doit aussi dépasser 60 s. Côté client, donnez à `curl` un `--max-time` supérieur à `wait` (70 pour 60).
+
+> ⚠️ Chaque attente occupe un processus PHP et une connexion MySQL (une seule, gardée pendant l'attente : une petite requête `SELECT 1 … LIMIT 1` par seconde, puis la liste à la fin). L'hébergement limite le nombre de processus PHP simultanés : évitez de lancer des dizaines d'attentes en parallèle. Si le client abandonne (`Ctrl+C`, `--max-time` trop court), PHP ne s'en aperçoit en général qu'en écrivant la réponse : l'attente continue alors jusqu'à l'arrivée d'un mail ou la fin du délai.
 
 ### Lire un mail : `GET /v1/messages/{id}`
 
@@ -754,7 +803,7 @@ Le jeton du relais, les jetons développeurs, le mot de passe et le cookie du Da
 - **Détection.** Une requête est en HTTPS si Apache indique `HTTPS=on` ou le port `443`. Chez OVH, le port est le signe fiable (méthode recommandée par OVH : `%{SERVER_PORT}` dans le `.htaccess`), `HTTPS` n'étant pas toujours fixé derrière leur frontal. Derrière un [proxy de confiance](#derrière-un-proxy-ou-un-cdn), c'est l'en-tête `X-Forwarded-Proto` qui décide.
 - **HSTS.** Après une première visite en HTTPS, le navigateur n'essaie plus `http://` pendant un an, même si on tape l'adresse sans `https://`. Pas de `preload` : l'inscription dans les navigateurs serait difficile à annuler.
 - **Journal.** Une requête refusée est écrite dans `var/log/api.log` (`[https] requête en clair refusée depuis « IP » : POST /v1/messages`). Si elle portait un en-tête `Authorization` (`GET` redirigé compris), le log l'indique, sans la valeur : ce jeton a circulé sans chiffrement, changez-le.
-- **Cookie de session.** Le cookie du Dashboard est marqué `Secure` d'après la même détection : il n'est jamais envoyé en clair. L'exemple `curl` de la page d'un jeton suit la même détection : il est en `https://`, même derrière le frontal OVH.
+- **Cookie de session.** Le cookie du Dashboard est marqué `Secure` d'après la même détection : il n'est jamais envoyé en clair. Les exemples `curl` de la page d'un jeton suivent la même détection : ils sont en `https://`, même derrière le frontal OVH.
 - **Relais.** `RELAY_API_URL` doit commencer par `https://` : le relais refuse de démarrer sinon (`http://` n'est accepté que vers `localhost`, pour des tests).
 
 > ⚠️ Activez le certificat SSL de l'hébergement **avant** : voir l'[étape 4](#4-brancher-le-domaine-apiamnesicdev).
@@ -766,3 +815,5 @@ Le jeton du relais, les jetons développeurs, le mot de passe et le cookie du Da
 Sur un hébergement OVH sans option CDN, l'IP du client est dans `REMOTE_ADDR` : laissez `proxy.trusted_proxies` vide. Cette IP sert au filtre du relais et à la limitation des connexions au Dashboard (par adresse), et apparaît dans leur journal. Si vous activez un CDN devant l'API, listez ses adresses dans `proxy.trusted_proxies`. L'IP réelle sera alors lue dans `X-Forwarded-For`, mais **uniquement** pour les requêtes qui viennent de ces adresses. Sans cette précaution, n'importe qui pourrait envoyer un faux en-tête pour se faire passer pour le serveur Mailpit.
 
 Il en va de même pour le protocole : l'en-tête `X-Forwarded-Proto` (`https` ou `http`, la dernière valeur s'il y en a plusieurs) n'est lu que pour ces adresses. Un CDN qui joint l'hébergement en `http://` **doit** donc être listé, sinon chaque page est redirigée vers `https://` à l'infini (« Trop de redirections »). Le `.htaccess` laisse passer à PHP une requête qui annonce `X-Forwarded-Proto: https` : c'est PHP qui vérifie qu'elle vient bien d'un proxy de confiance.
+
+Le délai d'attente du proxy ou du CDN (temps maximal avant la réponse) doit dépasser 60 secondes : sinon, une requête `GET /v1/messages?wait=60` est coupée avant la fin de l'attente ([Attendre un mail](#attendre-un-mail--wait-et-since)).

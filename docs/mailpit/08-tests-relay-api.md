@@ -429,6 +429,30 @@ curl -s -u admin:MotDePasseSolide http://127.0.0.1:8025/api/v1/messages?limit=1 
 
 ❌ Le mail arrive au bout de 30 s au lieu d'une ou deux secondes : le webhook n'atteint pas le relais, et c'est la recherche périodique qui l'a trouvé. Regardez `sudo journalctl -u mailpit -n 20 | grep webhook` et la [Partie 7, étape 7](07-relay.md#étape-7--envoyer-le-webhook-de-mailpit-au-relais).
 
+### Étape 4.1 bis — 🖥️ Serveur : attendre l'arrivée d'un mail (`wait`)
+
+Un développeur qui teste un envoi peut demander à l'API d'**attendre** le mail, au lieu de l'interroger en boucle ([Attendre un mail](../../api/README.md#attendre-un-mail--wait-et-since)) : il note l'heure, déclenche l'envoi, puis appelle `GET /v1/messages?address=…&since=<heure>&wait=60`. Ici, le mail part 5 secondes après le début de l'attente :
+
+```bash
+DEPUIS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+(sleep 5; swaks --server 127.0.0.1 --port 25 --to "${TO:?TO est vide : export TO=essai@votre-sous-domaine}" --header "Subject: Phase 4.1 bis" >/dev/null) &
+time curl -4 -s --max-time 70 -H "Authorization: Bearer $JETON" "$API/v1/messages?address=$TO&since=$DEPUIS&wait=60&limit=1" \
+  | grep -oE '"(count|waited_ms|subject|complete)":[^,]*'
+```
+
+✅ Attendu, au bout de 6 à 8 secondes (`real` de `time`) : `"count":1`, `"waited_ms"` entre 5000 et 8000 environ, `"subject":"Phase 4.1 bis"` et `"complete":true`. La réponse arrive dès que le mail est complet dans l'API, sans attendre les 60 secondes.
+
+Sans nouveau mail, la réponse arrive à la fin du délai, vide :
+
+```bash
+DEPUIS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+time curl -4 -s --max-time 20 -H "Authorization: Bearer $JETON" "$API/v1/messages?address=$TO&since=$DEPUIS&wait=10" | grep -oE '"(count|waited_ms)":[^,]*'
+```
+
+✅ Attendu, au bout de 10 secondes environ : `"count":0` et `"waited_ms":10…`.
+
+❌ Réponse immédiate, sans `"waited_ms"` : l'API en ligne est une version précédente, qui ignore `wait` (renvoyez `src/` en FTP). `"count":0` après 60 secondes alors que le relais a écrit `enregistré par l'API (Phase 4.1 bis)` : vérifiez `$TO` (`echo $TO`) et l'heure du serveur (`date -u`). `curl: (28) Operation timed out` : `--max-time` plus court que `wait`.
+
 ### Étape 4.2 — 🖥️ Serveur : HTML, image intégrée et pièce jointe
 
 Ce script envoie un mail complet : texte, HTML avec une image intégrée (`cid:`) et une pièce jointe.

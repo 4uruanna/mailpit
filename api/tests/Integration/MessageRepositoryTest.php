@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace App\Tests\Integration;
 
+use App\Persistence\Database;
 use App\Persistence\MessageRepository;
 use App\Tests\Support\DatabaseTestCase;
+use App\Tests\Support\TestDatabase;
+use DateTimeImmutable;
 
 final class MessageRepositoryTest extends DatabaseTestCase
 {
@@ -305,6 +308,53 @@ final class MessageRepositoryTest extends DatabaseTestCase
 
         self::assertSame(['total' => 0, 'messages' => []], $this->repository->list(10, 0, []));
         self::assertSame(0, $this->repository->list(10, 0, ['inconnu@test.fr'])['total']);
+    }
+
+    public function testListAndExistsWithSinceAndCompleteOnly(): void
+    {
+        $this->save(self::payload('ancien', ['alice@test.fr'], created: '2026-11-09T09:00:00Z'));
+        // Reçu à 14:03:00.123456, affiché « 14:03:00.123Z » par l'API ; une pièce encore attendue.
+        $this->save(self::payload('piece', ['alice@test.fr'], [['2', 10]], '2026-11-09T14:03:00.123456Z'));
+        $this->save(self::payload('bob', ['bob@test.fr'], created: '2026-11-09T15:00:00Z'));
+
+        $since = new DateTimeImmutable('2026-11-09T14:00:00Z');
+        self::assertSame(['bob', 'piece'], array_column($this->repository->list(10, 0, since: $since)['messages'], 'id'));
+        self::assertSame(['bob'], array_column($this->repository->list(10, 0, since: $since, completeOnly: true)['messages'], 'id'));
+        self::assertSame(1, $this->repository->list(10, 0, since: $since, completeOnly: true)['total']);
+        self::assertSame(['piece'], array_column($this->repository->list(10, 0, ['alice@test.fr'], since: $since)['messages'], 'id'));
+
+        // Strictement après, à la milliseconde près : la date affichée d'un mail ne le contient pas.
+        self::assertTrue($this->repository->exists(['alice@test.fr'], new DateTimeImmutable('2026-11-09T14:03:00.122999Z')));
+        self::assertFalse($this->repository->exists(['alice@test.fr'], new DateTimeImmutable('2026-11-09T14:03:00.123Z')));
+        // Même instant, autre fuseau.
+        self::assertFalse($this->repository->exists(['alice@test.fr'], new DateTimeImmutable('2026-11-09T15:03:00.123+01:00')));
+
+        self::assertTrue($this->repository->exists(['alice@test.fr'], $since));
+        self::assertFalse($this->repository->exists(['alice@test.fr'], $since, completeOnly: true));
+        self::assertTrue($this->repository->exists(null, $since, completeOnly: true));
+        self::assertTrue($this->repository->exists(['alice@test.fr'], completeOnly: true), 'sans since : « ancien »');
+        self::assertFalse($this->repository->exists([]));
+        self::assertFalse($this->repository->exists(['inconnu@test.fr']));
+
+        // La pièce arrive : le mail devient complet.
+        $this->repository->markPartStored($this->pk('piece'), '2', 10, hash('sha256', 'x'), 'piece/part-2');
+        self::assertTrue($this->repository->exists(['alice@test.fr'], $since, completeOnly: true));
+    }
+
+    public function testExistsSeesMessagesSavedByAnotherConnection(): void
+    {
+        // GET /v1/messages?wait=… répète exists() sur sa connexion, pendant que le relais enregistre
+        // le mail sur une autre : aucune transaction (instantané) ne doit masquer le nouveau mail.
+        $since = new DateTimeImmutable('2026-11-09T14:00:00Z');
+        self::assertFalse($this->repository->exists(['alice@test.fr'], $since, completeOnly: true));
+
+        $relay = new MessageRepository(new Database(TestDatabase::config()));
+        $relay->save(self::message(self::payload('nouveau', ['alice@test.fr'], [['2', 10]], '2026-11-09T14:03:01Z')), null, '203.0.113.10', '{}', self::MAX_PART_SIZE);
+        self::assertFalse($this->repository->exists(['alice@test.fr'], $since, completeOnly: true), 'pièce encore attendue');
+        self::assertTrue($this->repository->exists(['alice@test.fr'], $since));
+
+        $relay->markPartStored($this->pk('nouveau'), '2', 10, hash('sha256', 'x'), 'nouveau/part-2');
+        self::assertTrue($this->repository->exists(['alice@test.fr'], $since, completeOnly: true));
     }
 
     public function testRecipientsAndCountByAddress(): void

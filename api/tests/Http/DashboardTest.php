@@ -226,6 +226,7 @@ final class DashboardTest extends AppTestCase
         $body = (string) $response->getBody();
         self::assertStringContainsString('https://api.test/v1/messages?address=', $body);
         self::assertStringContainsString('https://api.test/v1/messages/ID_DU_MAIL', $body);
+        self::assertStringContainsString('&amp;since=$DEPUIS&amp;wait=60"', $body);
         self::assertStringNotContainsString('http://api.test', $body);
     }
 

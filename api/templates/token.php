@@ -73,4 +73,7 @@
     <code class="code secret">curl -s -H 'Authorization: Bearer <?= $e($plain ?? $token['hint'] . '…') ?>' '<?= $e($origin . $url('/v1/messages')) ?>?address=<?= $e(array_key_first($addresses) ?? 'adresse@exemple.fr') ?>'</code>
     <p class="muted">Un mail complet (texte, HTML, en-têtes), avec l'<code>id</code> lu dans la liste.</p>
     <code class="code secret">curl -s -H 'Authorization: Bearer <?= $e($plain ?? $token['hint'] . '…') ?>' '<?= $e($origin . $url('/v1/messages/')) ?>ID_DU_MAIL'</code>
+    <p class="muted">Attendre un nouveau mail : notez l'heure juste avant l'envoi, déclenchez l'envoi, puis attendez (60 s au plus ; seuls les mails complets, pièces jointes reçues, comptent).</p>
+    <code class="code secret">DEPUIS=$(date -u +%Y-%m-%dT%H:%M:%SZ)</code>
+    <code class="code secret">curl -s --max-time 70 -H 'Authorization: Bearer <?= $e($plain ?? $token['hint'] . '…') ?>' "<?= $e($origin . $url('/v1/messages')) ?>?address=<?= $e(array_key_first($addresses) ?? 'adresse@exemple.fr') ?>&amp;since=$DEPUIS&amp;wait=60"</code>
 </div>

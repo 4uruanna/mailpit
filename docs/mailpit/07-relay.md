@@ -353,4 +353,4 @@ Si vous aviez ajouté `-v /etc/mailpit/certs:/certs:ro` en [Partie 4](04-tls.md)
 
 ---
 
-[←](06-webhook.md) · [Sommaire](../mailpit.md)
+[←](06-webhook.md) · [Sommaire](../mailpit.md) · [→](08-tests-relay-api.md)

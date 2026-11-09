@@ -19,7 +19,7 @@ Options -Indexes
 </FilesMatch>
 
 # Dossiers internes : 404, même si mod_rewrite était désactivé.
-RedirectMatch 404 (^|/)(vendor|src|sql|var|bin|templates)(/|$)
+RedirectMatch 404 (^|/)(vendor|src|sql|var|bin|templates|tests)(/|$)
 
 <IfModule mod_rewrite.c>
     RewriteEngine On

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Tests du relais : vendor/bin/phpunit (voir la section « Tests » du README).
+  Ils lancent de petits serveurs « php -S » sur 127.0.0.1 (faux Mailpit, fausse API) : aucun service externe.
+-->
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         cacheDirectory=".phpunit.cache"
+         colors="true"
+         beStrictAboutOutputDuringTests="true"
+         failOnRisky="true"
+         failOnWarning="true"
+         failOnDeprecation="true"
+         failOnNotice="true"
+         displayDetailsOnTestsThatTriggerDeprecations="true"
+         displayDetailsOnTestsThatTriggerErrors="true"
+         displayDetailsOnTestsThatTriggerNotices="true"
+         displayDetailsOnTestsThatTriggerWarnings="true"
+         displayDetailsOnSkippedTests="true"
+         displayDetailsOnPhpunitDeprecations="true">
+    <testsuites>
+        <testsuite name="relay">
+            <directory>tests</directory>
+        </testsuite>
+    </testsuites>
+
+    <source>
+        <include>
+            <directory>src</directory>
+        </include>
+    </source>
+
+    <php>
+        <ini name="error_reporting" value="-1"/>
+    </php>
+</phpunit>

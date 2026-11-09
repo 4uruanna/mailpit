@@ -1,0 +1,102 @@
+# Tests automatiques (PHPUnit) de l'API et du relais, à chaque push et pull request.
+# En local : voir la section « Tests » de api/README.md et de relay/README.md.
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  api:
+    name: API (PHP 8.5, MySQL 8.4)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: mailpit_test
+          MYSQL_USER: mailpit
+          MYSQL_PASSWORD: mailpit
+        ports:
+          - 3306:3306
+        # Prêt quand le vrai serveur écoute en TCP (pas le serveur temporaire de l'initialisation).
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=30
+
+    env:
+      TEST_DB_HOST: 127.0.0.1
+      TEST_DB_PORT: 3306
+      TEST_DB_NAME: mailpit_test
+      TEST_DB_USER: mailpit
+      TEST_DB_PASSWORD: mailpit
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          extensions: pdo_mysql, mbstring
+          coverage: none
+          tools: composer:v2
+
+      - name: Dossier du cache Composer
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: composer-api-${{ hashFiles('api/composer.lock') }}
+          restore-keys: composer-api-
+
+      - name: Dépendances
+        run: composer install --no-interaction --no-progress --prefer-dist
+
+      # --fail-on-skipped : en CI, un test sauté (base injoignable…) est une erreur.
+      - name: PHPUnit
+        run: vendor/bin/phpunit --fail-on-skipped
+
+  relay:
+    name: Relais (PHP 8.5)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: relay
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          extensions: curl, pcntl, posix
+          coverage: none
+          tools: composer:v2
+
+      - name: Dossier du cache Composer
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: composer-relay-${{ hashFiles('relay/composer.lock') }}
+          restore-keys: composer-relay-
+
+      - name: Dépendances (PHPUnit uniquement)
+        run: composer install --no-interaction --no-progress --prefer-dist
+
+      - name: PHPUnit
+        run: vendor/bin/phpunit --fail-on-skipped

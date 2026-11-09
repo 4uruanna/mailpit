@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Tests de l'API : vendor/bin/phpunit (voir la section « Tests » du README).
+  Les tests d'intégration et HTTP utilisent une base MySQL de test, VIDÉE à chaque lancement.
+  Les valeurs ci-dessous sont les valeurs par défaut : une variable d'environnement déjà définie
+  (ex. TEST_DB_HOST=db vendor/bin/phpunit, ou la CI) est prioritaire.
+-->
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="tests/bootstrap.php"
+         cacheDirectory=".phpunit.cache"
+         colors="true"
+         beStrictAboutOutputDuringTests="true"
+         failOnRisky="true"
+         failOnWarning="true"
+         failOnDeprecation="true"
+         failOnNotice="true"
+         displayDetailsOnTestsThatTriggerDeprecations="true"
+         displayDetailsOnTestsThatTriggerErrors="true"
+         displayDetailsOnTestsThatTriggerNotices="true"
+         displayDetailsOnTestsThatTriggerWarnings="true"
+         displayDetailsOnSkippedTests="true"
+         displayDetailsOnPhpunitDeprecations="true">
+    <testsuites>
+        <testsuite name="unit">
+            <directory>tests/Unit</directory>
+        </testsuite>
+        <testsuite name="integration">
+            <directory>tests/Integration</directory>
+        </testsuite>
+        <testsuite name="http">
+            <directory>tests/Http</directory>
+        </testsuite>
+    </testsuites>
+
+    <source>
+        <include>
+            <directory>src</directory>
+        </include>
+    </source>
+
+    <php>
+        <ini name="error_reporting" value="-1"/>
+        <env name="TEST_DB_HOST" value="127.0.0.1"/>
+        <env name="TEST_DB_PORT" value="3306"/>
+        <env name="TEST_DB_NAME" value="mailpit_test"/>
+        <env name="TEST_DB_USER" value="mailpit"/>
+        <env name="TEST_DB_PASSWORD" value="mailpit"/>
+    </php>
+</phpunit>

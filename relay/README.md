@@ -36,6 +36,7 @@ Installation pas à pas : **[Partie 7 du tutoriel](../docs/mailpit/07-relay.md)*
 | `bin/retry-failed.php` | retire le tag d'échec des mails refusés : ils sont renvoyés aussitôt |
 | `public/index.php` | récepteur HTTP (`POST /hook`, `GET /health`) |
 | `src/` | code du relais |
+| `composer.json`, `phpunit.xml.dist`, `tests/` | [tests automatisés](#tests) uniquement : ni Composer ni PHPUnit ne sont dans l'image |
 
 ## Configuration
 
@@ -93,3 +94,31 @@ Variables d'environnement (voir `relay.env.example`) :
 - Un mail **supprimé de Mailpit** avant d'avoir été relayé (à la main, ou par `MP_MAX_MESSAGES` / `MP_MAX_AGE`) ne peut plus l'être : c'est la seule copie. Avec `MP_MAX_MESSAGES=1000`, cela n'arrive que si plus de 1000 mails arrivent pendant une panne de l'API.
 - Retirer le tag `relayed` d'un mail dans l'interface de Mailpit le fait renvoyer. C'est sans risque, car l'API le reconnaît comme un doublon.
 - Le relais garde en mémoire seulement le délai avant le prochain essai de chaque mail en échec. Après un redémarrage, tous les mails en attente sont réessayés tout de suite.
+
+## Tests
+
+Tests **PHPUnit** du relais, sur votre ordinateur (PHP 8.4 minimum avec `curl` ; `posix` pour le test du signal envoyé par le récepteur). Le relais reste **sans dépendance** : `composer.json` ne contient que PHPUnit, en `require-dev`, et le `Containerfile` ne copie que `bin/`, `public/` et `src/`. L'image est la même qu'avant.
+
+```bash
+cd relay
+composer install
+vendor/bin/phpunit
+```
+
+| Fichier | Ce qui est testé |
+|---|---|
+| `tests/ConfigTest.php` | variables `RELAY_…` : valeurs par défaut, chaque erreur, `relay.env.example` |
+| `tests/HttpTest.php` | client HTTP contre un petit serveur `php -S` : en-têtes, authentification, taille maximale, délai, redirection non suivie |
+| `tests/ReceiverTest.php` | récepteur (`public/index.php`) : `POST /hook`, `GET /health`, `405`, `404`, et le signal `SIGUSR1` qui réveille le worker |
+| `tests/WorkerTest.php` | le relais de bout en bout (voir ci-dessous) |
+
+Pour le Worker, les tests lancent deux faux serveurs `php -S 127.0.0.1:<port libre>`, qui partagent leur état dans un fichier temporaire :
+
+- un **faux Mailpit** (`tests/Fixtures/mailpit-router.php`) : recherche, mail complet, en-têtes, pièces, `PUT` des tags et du « non lu » ;
+- une **fausse API** (`tests/Fixtures/api-router.php`) : `POST /v1/messages` et `POST /v1/messages/{id}/part/{partId}`, avec contrôle du jeton et du SHA-256.
+
+Le Worker tourne dans un processus séparé (`tests/Fixtures/run-worker.php`, chargé par `src/bootstrap.php` comme en production), et ses logs sont vérifiés. Cas couverts : livraison complète puis tag `relayed`, pièces envoyées avec le bon SHA-256, remise en « non lu », refus définitif (`422`, `409`) ⇒ tag `relay-failed`, erreur passagère (`500`, `401`) ⇒ pas de tag et nouvel essai différé, empreinte de Mailpit différente, pièces `too_large`, lots de recherche, Mailpit injoignable.
+
+Aucun service externe n'est nécessaire : tout tourne sur `127.0.0.1`.
+
+**CI** : à chaque `push` et `pull request`, GitHub Actions lance ces tests en PHP 8.5 avec `curl`, `pcntl` et `posix` (`.github/workflows/tests.yml`, job `relay`), ainsi que ceux de l'[API](../api/README.md#tests-automatisés).

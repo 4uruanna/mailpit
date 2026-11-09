@@ -37,6 +37,7 @@ api/
 ├── .ovhconfig           # version de PHP sur l'hébergement OVH
 ├── config.example.php   # modèle de configuration → à copier en config.php
 ├── composer.json / composer.lock
+├── phpunit.xml.dist     # configuration des tests automatisés (PHPUnit)
 ├── bin/
 │   └── create-admin.php # prépare la requête SQL qui crée un administrateur
 ├── public/
@@ -47,6 +48,7 @@ api/
 │   └── migrations/      # mises à jour d'une base créée avec une version précédente
 ├── src/                 # code de l'API
 ├── templates/           # pages HTML du Dashboard
+├── tests/               # tests automatisés (voir « Tests automatisés »), inutiles sur l'hébergement
 ├── var/log/             # logs (doit être accessible en écriture)
 ├── var/messages/        # pièces jointes et images intégrées, un dossier par mail (accessible en écriture)
 └── vendor/              # généré par composer install, à envoyer en FTP
@@ -132,7 +134,7 @@ composer install --no-dev --optimize-autoloader
 cp config.example.php config.php
 ```
 
-`composer.json` fixe la plateforme sur PHP 8.5 : les dépendances installées sont celles qui conviennent à l'hébergement, même si votre PHP local est différent.
+`composer.json` fixe la plateforme sur PHP 8.5 : les dépendances installées sont celles qui conviennent à l'hébergement, même si votre PHP local est différent. `--no-dev` laisse de côté PHPUnit, qui ne sert qu'aux [tests automatisés](#tests-automatisés).
 
 Éditez `config.php` :
 
@@ -193,7 +195,7 @@ Créez par exemple un dossier `api` à la racine FTP de l'hébergement (à côt�
 
 > 💡 Les fichiers qui commencent par un point sont souvent masqués dans les clients FTP. Dans FileZilla : menu **Serveur** → **Forcer l'affichage des fichiers cachés**.
 
-Envoyez aussi `templates/` (pages et script du Dashboard). Inutile d'envoyer `README.md`, `bin/`, `sql/` et `config.example.php` (ils sont de toute façon bloqués par le `.htaccess`).
+Envoyez aussi `templates/` (pages et script du Dashboard). Inutile d'envoyer `README.md`, `bin/`, `sql/`, `tests/`, `phpunit.xml.dist` et `config.example.php` (ils sont de toute façon bloqués par le `.htaccess`).
 
 Les dossiers `var/log/` et `var/messages/` doivent être accessibles en écriture par PHP (droits `755` ou `705`, ce qui est le cas par défaut chez OVH). `var/messages/` contiendra toutes les pièces jointes : surveillez l'espace disque de l'hébergement.
 
@@ -287,6 +289,61 @@ curl -s 'https://api.amnesic.dev/v1/messages?address=essai@test.mondomaine.fr' -
 ```
 
 **Fichiers protégés** : `https://api.amnesic.dev/config.php`, `/vendor/autoload.php`, `/.ovhconfig`… doivent tous renvoyer `403` ou `404`.
+
+---
+
+## Tests automatisés
+
+Les tests **PHPUnit** vérifient le code sur votre ordinateur, sans rien déployer. Ils ne remplacent pas les essais ci-dessus, qui vérifient l'installation réelle (hébergement, DNS, `.htaccess`…).
+
+| Suite | Dossier | Ce qui est testé | Base MySQL |
+|---|---|---|---|
+| `unit` | `tests/Unit/` | classes sans base : filtre IP (`IpMatcher`, `ClientIpResolver`), adresses, validation du JSON des mails et des pièces (chaque erreur `422`), configuration (`Settings`), filtres du Dashboard, jetons (`ApiScope`, `Authorization: Bearer`) | non |
+| `integration` | `tests/Integration/` | accès à la base : mails, pièces, purge, liste par adresse, suppression, jetons développeurs, limite de connexion au Dashboard | oui |
+| `http` | `tests/Http/` | l'application complète (`Kernel::create`) avec de fausses requêtes : routes du relais (`403`, `401`, `415`, `400`, `413`, `422`, `201`, `200`), envoi des pièces jusqu'à `"complete": true`, routes des développeurs, Dashboard (redirection vers la connexion, refus sans jeton anti-CSRF) | oui |
+
+**Prérequis** : PHP 8.4 minimum avec `pdo_mysql` et `mbstring`, Composer, et une base MySQL **de test** (8.4 comme l'hébergement ; 8.0.19 minimum).
+
+> ⚠️ Les tests **suppriment toutes les tables** de la base de test, puis importent `sql/schema.sql` : n'utilisez jamais une vraie base. Par sécurité, son nom doit contenir `test`.
+
+Créez la base une fois (en `root`) :
+
+```sql
+CREATE DATABASE mailpit_test CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+CREATE USER 'mailpit'@'localhost' IDENTIFIED BY 'mailpit';
+GRANT ALL PRIVILEGES ON mailpit_test.* TO 'mailpit'@'localhost';
+```
+
+Puis, dans le dossier `api/` :
+
+```bash
+composer install
+vendor/bin/phpunit
+```
+
+> ⚠️ Sans `--no-dev`, `composer install` ajoute PHPUnit dans `vendor/`. Avant un envoi FTP, relancez `composer install --no-dev --optimize-autoloader` (voir [Préparer les fichiers](#1-préparer-les-fichiers-sur-votre-ordinateur)).
+
+Pour une seule suite : `vendor/bin/phpunit --testsuite unit` (aucune base nécessaire). Pour un seul fichier : `vendor/bin/phpunit tests/Http/RelayRoutesTest.php`.
+
+La base est lue dans ces variables d'environnement (valeurs par défaut dans `phpunit.xml.dist`) :
+
+| Variable | Défaut |
+|---|---|
+| `TEST_DB_HOST` | `127.0.0.1` |
+| `TEST_DB_PORT` | `3306` |
+| `TEST_DB_NAME` | `mailpit_test` |
+| `TEST_DB_USER` | `mailpit` |
+| `TEST_DB_PASSWORD` | `mailpit` |
+
+```bash
+TEST_DB_HOST=192.168.1.20 TEST_DB_PASSWORD=autre vendor/bin/phpunit
+```
+
+> 💡 Base injoignable : les tests `integration` et `http` sont marqués « skipped » (S), les tests `unit` passent quand même.
+
+Les pièces jointes des tests sont écrites dans un dossier temporaire, supprimé après chaque test. Les messages que le code écrit dans le log (`error_log`) vont dans `mailpit-api-tests.log`, dans le dossier temporaire du système (`/tmp` en général).
+
+**CI** : à chaque `push` et `pull request`, GitHub Actions lance ces tests en PHP 8.5 avec un service MySQL 8.4 (`.github/workflows/tests.yml`, job `api`), ainsi que ceux du [relais](../relay/README.md#tests). En CI, un test « skipped » fait échouer le job (`--fail-on-skipped`).
 
 ---
 

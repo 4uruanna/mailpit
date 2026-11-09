@@ -1,0 +1,24 @@
+{
+    "name": "amnesic/mailpit-relay",
+    "description": "Relais Mailpit → API. Sans dépendance à l'exécution : Composer ne sert qu'aux tests (PHPUnit).",
+    "type": "project",
+    "license": "Apache-2.0",
+    "require-dev": {
+        "phpunit/phpunit": "^13.4"
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Relay\\": "src/",
+            "Relay\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "phpunit"
+    },
+    "config": {
+        "sort-packages": true,
+        "platform": {
+            "php": "8.5.0"
+        }
+    }
+}

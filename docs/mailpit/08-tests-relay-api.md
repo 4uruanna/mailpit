@@ -24,7 +24,7 @@ Chaque étape indique **où** la faire :
 
 ## Suivi
 
-- [ ] [Phase 0](#phase-0--point-de-départ) — Point de départ : Mailpit reçoit des mails
+- [x] [Phase 0](#phase-0--point-de-départ) — Point de départ : Mailpit reçoit des mails
 - [ ] [Phase 1](#phase-1--lapi-est-en-ligne) — L'API est en ligne et protégée
 - [ ] [Phase 2](#phase-2--lapi-répond-au-serveur-mailpit) — L'API répond au serveur Mailpit
 - [ ] [Phase 3](#phase-3--le-relais-démarre) — Le relais démarre
@@ -62,7 +62,14 @@ curl -6 -s https://ifconfig.me; echo
 
 Notez les deux résultats. Si la seconde commande n'affiche rien, le serveur n'a pas d'IPv6 : seule l'IPv4 compte.
 
-> ⚠️ **Serveur à la maison :** l'IPv4 doit être **fixe** (option de votre box ou de votre fournisseur). Sinon, l'API refusera le serveur dès que l'IP changera. L'IPv6 d'une box est souvent stable, mais le **préfixe** peut changer. Dans ce cas, mettez la plage `/64` dans `allowed_ips` plutôt que l'adresse exacte.
+> ⚠️ **Serveur à la maison :** l'IPv4 doit être **fixe** (option de votre box ou de votre fournisseur). Sinon, l'API refusera le serveur dès que l'IP changera.
+
+**Choix retenu : autoriser uniquement l'IPv4.** L'IPv6 affichée ici est souvent une **adresse temporaire** : Linux en tire une nouvelle au hasard, en général chaque jour (« privacy extensions »). On la reconnaît à sa seconde moitié sans motif particulier, par exemple `…:99e9:63d0:137c:4512`. L'autoriser telle quelle ne tiendrait qu'un jour. On met donc **seulement l'IPv4** dans `allowed_ips`, avec deux conséquences :
+
+- l'hébergement OVH répond aussi en IPv6, donc tous les `curl` de cette page vers l'API forcent l'IPv4 avec **`curl -4`**. Sans ce `-4`, la réponse serait `403` ;
+- le relais n'est pas concerné : son réseau Podman n'utilise que l'IPv4 (vérifié à l'étape 3.4).
+
+> Pour autoriser malgré tout l'IPv6, il faut la plage `/64` du réseau (les 4 premiers groupes suivis de `::/64`, par exemple `2001:db8:1:2::/64`), jamais l'adresse exacte.
 
 ---
 
@@ -82,7 +89,7 @@ openssl rand -hex 32
 Dans `config.php`, renseignez :
 
 - `db` : les identifiants de la base MySQL ;
-- `webhook.allowed_ips` : les IP de l'étape 0.2 ;
+- `webhook.allowed_ips` : l'IPv4 de l'étape 0.2, seule ;
 - `webhook.token` : le résultat de `openssl rand -hex 32`.
 
 Ce jeton servira à nouveau en phase 2 et en phase 3. Conservez-le dans un gestionnaire de mots de passe.
@@ -143,38 +150,38 @@ Les commandes suivantes utilisent `$JETON` et `$API`. Si vous ouvrez un nouveau 
 
 ```bash
 # Sans jeton
-curl -s -o /dev/null -w '%{http_code}\n' "$API/v1/messages"
+curl -4 -s -o /dev/null -w '%{http_code}\n' "$API/v1/messages"
 
 # Avec un faux jeton
-curl -s -o /dev/null -w '%{http_code}\n' -H 'Authorization: Bearer faux' "$API/v1/messages"
+curl -4 -s -o /dev/null -w '%{http_code}\n' -H 'Authorization: Bearer faux' "$API/v1/messages"
 
 # Avec le bon jeton
-curl -s -w '\n%{http_code}\n' -H "Authorization: Bearer $JETON" "$API/v1/messages"
+curl -4 -s -w '\n%{http_code}\n' -H "Authorization: Bearer $JETON" "$API/v1/messages"
 ```
 
 ✅ Attendu : `401`, `401`, puis `{"total":0,…}` et `200`.
 
-❌ `403` partout : l'IP du serveur n'est pas dans `allowed_ips`. L'IP refusée est écrite dans `api/var/log/api.log` (`[ip-filter] requête refusée depuis « … »`). C'est souvent l'IPv6.
+❌ `403` partout : l'IP du serveur n'est pas dans `allowed_ips`, ou le `-4` a été oublié. L'IP refusée est écrite dans `api/var/log/api.log` (`[ip-filter] requête refusée depuis « … »`).
 
 ❌ `401` même avec le bon jeton : l'en-tête `Authorization` ne parvient pas à PHP (`.htaccess` manquants), ou le jeton ne correspond pas à celui de `config.php`.
 
-### Étape 2.3 — 🖥️ Serveur : en IPv4 **et** en IPv6
+### Étape 2.3 — 🖥️ Serveur : IPv4 acceptée, IPv6 refusée
 
 ```bash
 curl -4 -s -o /dev/null -w 'IPv4 : %{http_code}\n' -H "Authorization: Bearer $JETON" "$API/v1/messages"
 curl -6 -s -o /dev/null -w 'IPv6 : %{http_code}\n' -H "Authorization: Bearer $JETON" "$API/v1/messages"
 ```
 
-✅ Attendu : `200` pour IPv4. Pour IPv6 : `200`, ou `000` si le serveur n'a pas d'IPv6.
+✅ Attendu (seule l'IPv4 est autorisée, voir l'étape 0.2) : `IPv4 : 200`, puis `IPv6 : 403`, ou `IPv6 : 000` si le serveur n'a pas d'IPv6. Le `403` en IPv6 prouve que le filtre IP fait son travail.
 
-❌ `403` sur l'une des deux : ajoutez l'IP correspondante dans `allowed_ips`.
+❌ `IPv4 : 403` : l'IPv4 de l'étape 0.2 n'est pas (ou mal) écrite dans `allowed_ips`.
 
 ### Étape 2.4 — 🖥️ Serveur : enregistrer un faux mail avec une pièce jointe
 
 On envoie à la main ce que fera le relais : le mail en JSON, puis sa pièce jointe.
 
 ```bash
-curl -s -w '\n%{http_code}\n' -X POST "$API/v1/messages" \
+curl -4 -s -w '\n%{http_code}\n' -X POST "$API/v1/messages" \
   -H "Authorization: Bearer $JETON" -H 'Content-Type: application/json' \
   -d '{"ID":"test-manuel-1","Created":"2026-01-01T12:00:00Z","Subject":"Test manuel","From":{"Name":"","Address":"moi@exemple.fr"},"To":[],"Text":"Bonjour","Parts":[{"PartID":"2","Kind":"attachment","FileName":"test.txt","ContentType":"text/plain","ContentID":"","Size":5}]}'
 ```
@@ -185,7 +192,7 @@ Envoyez la pièce attendue (`missing`) :
 
 ```bash
 printf 'hello' > /tmp/test.txt
-curl -s -w '\n%{http_code}\n' -X POST "$API/v1/messages/test-manuel-1/part/2" \
+curl -4 -s -w '\n%{http_code}\n' -X POST "$API/v1/messages/test-manuel-1/part/2" \
   -H "Authorization: Bearer $JETON" -H 'Content-Type: application/octet-stream' \
   -H "X-Content-SHA256: $(sha256sum /tmp/test.txt | cut -d' ' -f1)" \
   --data-binary @/tmp/test.txt
@@ -214,10 +221,10 @@ Ce test vérifie que l'hébergement accepte des requêtes de la taille maximale 
 
 ```bash
 head -c 5242880 /dev/urandom > /tmp/gros.bin
-curl -s -o /dev/null -w '%{http_code}\n' -X POST "$API/v1/messages" \
+curl -4 -s -o /dev/null -w '%{http_code}\n' -X POST "$API/v1/messages" \
   -H "Authorization: Bearer $JETON" -H 'Content-Type: application/json' \
   -d '{"ID":"test-manuel-5mo","Created":"2026-01-01T12:00:00Z","Subject":"Test 5 Mo","From":{"Name":"","Address":"moi@exemple.fr"},"To":[],"Parts":[{"PartID":"2","Kind":"attachment","FileName":"gros.bin","ContentType":"application/octet-stream","ContentID":"","Size":5242880}]}'
-curl -s -w '\n%{http_code}\n' -X POST "$API/v1/messages/test-manuel-5mo/part/2" \
+curl -4 -s -w '\n%{http_code}\n' -X POST "$API/v1/messages/test-manuel-5mo/part/2" \
   -H "Authorization: Bearer $JETON" -H 'Content-Type: application/octet-stream' \
   -H "X-Content-SHA256: $(sha256sum /tmp/gros.bin | cut -d' ' -f1)" \
   --data-binary @/tmp/gros.bin
@@ -280,7 +287,7 @@ sudo podman network inspect mailpit | grep dns_enabled
 
 ### Étape 3.4 — 🖥️ Serveur : l'IP que voit l'API quand c'est le relais qui appelle
 
-Le relais sort sur Internet **depuis son conteneur**, pas depuis le serveur. Le réseau Podman `mailpit` n'a en général que l'IPv4. Le relais appelle donc l'API en **IPv4**, même si les tests `curl` de la phase 2 sont passés par l'IPv6.
+Le relais sort sur Internet **depuis son conteneur**, pas depuis le serveur. Le réseau Podman `mailpit` n'a en général que l'IPv4. Le relais appelle donc l'API en **IPv4**, comme les tests `curl -4` de la phase 2.
 
 ```bash
 sudo podman exec mailpit-relay php -r 'echo file_get_contents("https://ifconfig.me/ip"), PHP_EOL;'
@@ -327,7 +334,7 @@ Vérifiez ensuite chaque côté :
 
 ```bash
 # Côté API : le mail est là, complet
-curl -s -H "Authorization: Bearer $JETON" "$API/v1/messages?limit=1" | grep -oE '"(subject|complete)":[^,]*'
+curl -4 -s -H "Authorization: Bearer $JETON" "$API/v1/messages?limit=1" | grep -oE '"(subject|complete)":[^,]*'
 
 # Côté Mailpit : le mail porte le tag « relayed » et reste non lu
 curl -s -u admin:MotDePasseSolide http://127.0.0.1:8025/api/v1/messages?limit=1 | grep -oE '"(Read|Tags)":[^,]*'
@@ -370,7 +377,7 @@ EOF
 Côté API :
 
 ```bash
-curl -s -H "Authorization: Bearer $JETON" "$API/v1/messages?limit=1" | python3 -m json.tool | grep -E '"(subject|complete|kind|file_name|status)"'
+curl -4 -s -H "Authorization: Bearer $JETON" "$API/v1/messages?limit=1" | python3 -m json.tool | grep -E '"(subject|complete|kind|file_name|status)"'
 ```
 
 ✅ Attendu : `"complete": true`, une pièce `"kind": "inline"` (`point.png`) et une pièce `"kind": "attachment"` (`note.txt`), toutes deux `"status": "stored"`.
@@ -397,7 +404,7 @@ Le mail est quand même livré et tagué `relayed`. Seul le contenu de la pièce
 Ce test vérifie qu'aucun mail n'est ignoré quand ils arrivent dans la même seconde (`MP_WEBHOOK_LIMIT=0`), et que le relais les envoie un par un.
 
 ```bash
-AVANT=$(curl -s -H "Authorization: Bearer $JETON" "$API/v1/messages?limit=1" | grep -o '"total":[0-9]*')
+AVANT=$(curl -4 -s -H "Authorization: Bearer $JETON" "$API/v1/messages?limit=1" | grep -o '"total":[0-9]*')
 for i in $(seq 1 10); do
   swaks --server 127.0.0.1 --port 25 --to essai@test.mondomaine.fr --header "Subject: Rafale $i" >/dev/null
 done
@@ -407,7 +414,7 @@ Attendez que les logs affichent 10 lignes `enregistré par l'API (Rafale …)`, 
 
 ```bash
 echo "avant : $AVANT"
-curl -s -H "Authorization: Bearer $JETON" "$API/v1/messages?limit=1" | grep -o '"total":[0-9]*'
+curl -4 -s -H "Authorization: Bearer $JETON" "$API/v1/messages?limit=1" | grep -o '"total":[0-9]*'
 sudo podman exec mailpit-relay php /app/bin/status.php
 ```
 
@@ -506,7 +513,8 @@ Notez ici chaque écart constaté et sa correction, au fil des essais.
 
 | Date | Étape | Constat | Correction |
 |---|---|---|---|
-| | | | |
+| 2026-11-09 | 0.1 | Mailpit tourne, `swaks` → `250`, l'API locale renvoie `"Subject":"Phase 0"` | — |
+| 2026-11-09 | 0.2 | IPv4 fixe. IPv6 = adresse temporaire (change régulièrement) | Seule l'IPv4 dans `allowed_ips`. Tous les `curl` vers l'API passent en `curl -4` |
 
 ---
 

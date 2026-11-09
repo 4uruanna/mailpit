@@ -28,7 +28,7 @@ Chaque étape indique **où** la faire :
 - [x] [Phase 1](#phase-1--lapi-est-en-ligne) — L'API est en ligne et protégée
 - [x] [Phase 2](#phase-2--lapi-répond-au-serveur-mailpit) — L'API répond au serveur Mailpit
 - [x] [Phase 3](#phase-3--le-relais-démarre) — Le relais démarre
-- [ ] [Phase 4](#phase-4--le-trajet-complet) — Le trajet complet : un mail arrive dans l'API
+- [x] [Phase 4](#phase-4--le-trajet-complet) — Le trajet complet : un mail arrive dans l'API
 - [ ] [Phase 5](#phase-5--les-pannes) — Les pannes : aucun mail perdu
 - [ ] [Phase 6](#phase-6--remise-en-ordre) — Remise en ordre
 
@@ -542,6 +542,7 @@ Notez ici chaque écart constaté et sa correction, au fil des essais.
 | 2026-11-09 | 4.2 | `complete: true`. Image intégrée (`inline`, `point.png`) et pièce jointe (`attachment`, `note.txt`) toutes deux `stored` | — |
 | 2026-11-09 | 4.3 | Mail de 8,2 Mo (pièce de 6 Mo) : livré, `complete: true`, pièce `too_large` (6000000 octets), avertissement dans les logs du relais | — |
 | 2026-11-09 | 4.4 | Rafale de 10 mails : 10 acceptés, 10 enregistrés par l'API, `total` +10, `status.php` : 0 en attente, 0 refusé | — |
+| 2026-11-09 | 4.5 | Vrai mail depuis Internet avec une photo (130 Ko) : `complete: true`, pièce `stored`, aucun `UFW BLOCK`. La règle SMTP du réseau `mailpit` (`10.89.25.0/24`) fonctionne | Ancienne règle `10.88.0.0/16 1025/tcp` devenue inutile : à supprimer |
 
 ---
 

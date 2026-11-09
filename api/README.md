@@ -2,16 +2,28 @@
 
 Petite API **PHP 8.5 / Slim 4 / MySQL 8.4** pour un hébergement **OVH Perso**. Elle reçoit chaque mail arrivé dans Mailpit et l'enregistre : le message en base MySQL, les pièces jointes en fichiers.
 
+Elle comprend aussi :
+
+- un **Dashboard** pour les administrateurs (`/v1/app/…`) : liste de tous les mails, gestion des jetons développeurs ;
+- des **jetons développeurs** : chacun lit (et supprime) par l'API les mails des adresses qui lui sont associées.
+
 ```
 relais (serveur Mailpit) ── 1. POST /v1/messages                     mail en JSON ──► table mailpit_messages
         Authorization:  ◄── réponse : pièces attendues ("missing")
         Bearer <jeton>  ── 2. POST /v1/messages/{id}/part/{partId}   une requête par pièce ──► var/messages/{id}/…
                         ◄── réponse : "complete": true quand tout est enregistré  + table mailpit_parts
 
-GET /v1/messages ──► liste des mails enregistrés (même jeton, même filtre IP)
+développeurs ── GET /v1/messages, GET /v1/addresses…    jeton « mpt_… » créé dans le Dashboard
+administrateurs ── https://api.amnesic.dev/v1/app/signin  Dashboard (identifiant + mot de passe)
 ```
 
-Deux protections, toutes deux obligatoires : l'**IP** de l'appelant doit être dans `webhook.allowed_ips` (sinon `403`), et le **jeton** `webhook.token` doit être présent (sinon `401`). Ce jeton est configuré des deux côtés : dans `config.php` ici, et dans `RELAY_API_TOKEN` côté relais.
+Trois sortes d'accès :
+
+| Qui | Comment | Peut |
+|---|---|---|
+| **Relais** | IP dans `webhook.allowed_ips` (sinon `403`) **et** jeton `webhook.token` (sinon `401`). Ce jeton est configuré des deux côtés : dans `config.php` ici, et dans `RELAY_API_TOKEN` côté relais | **Seul** à pouvoir envoyer des mails (`POST`). Peut aussi lister tous les mails (`GET /v1/messages`) |
+| **Développeurs** | Jeton `mpt_…` créé dans le Dashboard, depuis n'importe quelle IP | Lire et supprimer les mails des adresses associées à son jeton |
+| **Administrateurs** | Identifiant et mot de passe (table `mailpit_admins`), depuis n'importe quelle IP. 3 essais par identifiant sur 30 minutes | Voir tous les mails, créer et supprimer les jetons, leur associer des adresses |
 
 Le mail complet est envoyé par le [relais](../relay/README.md), installé sur le serveur Mailpit ([Partie 7 du tutoriel](../docs/mailpit/07-relay.md)) : en-têtes, texte, HTML, pièces jointes et images intégrées. Le relais ne garde rien de son côté : il ne considère un mail comme livré que lorsque l'API répond `"complete": true`.
 
@@ -25,12 +37,16 @@ api/
 ├── .ovhconfig           # version de PHP sur l'hébergement OVH
 ├── config.example.php   # modèle de configuration → à copier en config.php
 ├── composer.json / composer.lock
+├── bin/
+│   └── create-admin.php # prépare la requête SQL qui crée un administrateur
 ├── public/
 │   ├── .htaccess        # contrôleur frontal Slim
 │   └── index.php
 ├── sql/
-│   └── schema.sql       # tables MySQL, à importer une fois
+│   ├── schema.sql       # tables MySQL, à importer une fois
+│   └── migrations/      # mises à jour d'une base créée avec une version précédente
 ├── src/                 # code de l'API
+├── templates/           # pages HTML du Dashboard
 ├── var/log/             # logs (doit être accessible en écriture)
 ├── var/messages/        # pièces jointes et images intégrées, un dossier par mail (accessible en écriture)
 └── vendor/              # généré par composer install, à envoyer en FTP
@@ -38,15 +54,44 @@ api/
 
 ## Routes
 
-Toutes exigent le jeton : en-tête `Authorization: Bearer <jeton>` (relais), ou `?token=<jeton>` dans l'URL (webhook direct de Mailpit, qui ne sait pas ajouter d'en-tête).
+### Relais
+
+Elles exigent le jeton du relais : en-tête `Authorization: Bearer <jeton>` (relais), ou `?token=<jeton>` dans l'URL (webhook direct de Mailpit, qui ne sait pas ajouter d'en-tête). Et l'appel doit venir d'une IP de `webhook.allowed_ips`.
 
 | Méthode | URL | Réponse |
 |---|---|---|
 | `POST` | `/v1/messages` | Corps : le mail en JSON (voir ci-dessous).<br>`201 {"status":"created", "id":"…", "complete":false, "missing":["2","1.3"], "too_large":["4"]}` : message enregistré<br>`200 {"status":"updated"\|"duplicate", …}` : déjà reçu (même ID Mailpit), complété si besoin<br>`400` JSON invalide · `413` trop volumineux · `415` pas du JSON · `422` champ invalide |
 | `POST` | `/v1/messages/{id}/part/{partId}` | Corps : le contenu brut de la pièce (`Content-Type: application/octet-stream`), avec l'en-tête `X-Content-SHA256` (empreinte SHA-256 en hexadécimal).<br>`201 {"status":"stored", "complete":true, "missing":[], …}` : pièce enregistrée<br>`200 {"status":"already-stored", …}` : déjà reçue<br>`404` message ou pièce inconnus · `409` pièce `too_large`, ou déjà reçue avec un autre contenu · `413` au-delà de la limite · `415` mauvais Content-Type · `422` empreinte absente ou différente |
-| `GET` | `/v1/messages` | Liste des mails enregistrés, du plus récent au plus ancien (voir [Lister les mails](#lister-les-mails)).<br>`200 {"total":…, "count":…, "limit":1000, "offset":0, "messages":[…]}`<br>`400` `limit` ou `offset` invalide |
 
-Pour toutes : `401` jeton absent ou faux · `403` IP non autorisée · `500` erreur serveur (base injoignable…). Toute autre URL renvoie `404` (ou `403` si l'IP n'est pas autorisée : le filtre IP passe avant tout le reste).
+Pour les deux : `403` IP non autorisée (vérifiée en premier) · `401` jeton absent ou faux · `500` erreur serveur (base injoignable…).
+
+### Développeurs
+
+Elles exigent un jeton développeur, créé dans le Dashboard : en-tête `Authorization: Bearer mpt_…` (jamais dans l'URL). Le jeton ne voit que les mails dont l'un des destinataires (`To`, `Cc` ou `Bcc`) est une des adresses qui lui sont associées. Détail et exemples : [Jetons développeurs](#jetons-développeurs).
+
+| Méthode | URL | Réponse |
+|---|---|---|
+| `GET` | `/v1/messages` | Les mails de ses adresses, du plus récent au plus ancien, **avec leur corps** (texte et HTML). 5 par défaut.<br>Paramètres : `address`, `limit` (25 au maximum), `offset` ou `page`.<br>`200 {"total":…, "count":…, "limit":5, "offset":0, "page":1, "messages":[…]}`<br>`400` paramètre invalide · `403` adresse non associée au jeton |
+| `DELETE` | `/v1/messages/{id}` | Supprime ce mail.<br>`200 {"id":"…", "deleted":true}` · `404` mail inconnu, ou reçu par aucune de ses adresses |
+| `GET` | `/v1/addresses` | Ses adresses et leur nombre de mails.<br>`200 {"count":2, "addresses":[{"address":"alice@test.mondomaine.fr", "messages":3}, …]}` |
+| `DELETE` | `/v1/addresses?address=…` | Supprime tous les mails reçus par cette adresse (elle reste associée au jeton).<br>`200 {"address":"…", "deleted":3}` · `400` `address` absent · `403` adresse non associée au jeton |
+
+Pour toutes : `401` jeton absent, inconnu ou supprimé.
+
+`GET /v1/messages` accepte aussi le **jeton du relais**, depuis les IP de `webhook.allowed_ips` uniquement (sinon `403`) : il voit alors tous les mails. Pratique pour les tests depuis le serveur Mailpit ([Partie 8](../docs/mailpit/08-tests-relay-api.md)).
+
+### Dashboard
+
+Pages HTML pour les administrateurs, dans un navigateur. Voir [Dashboard](#dashboard-1).
+
+| URL | Page |
+|---|---|
+| `/v1/app/signin` | Connexion |
+| `/v1/app/messages` | Tous les mails, du plus récent au plus ancien, 50 par page (`?page=2`…) |
+| `/v1/app/tokens` | Liste des jetons, création, suppression |
+| `/v1/app/tokens/{id}` | Détail d'un jeton : associer et retirer des adresses |
+
+Toute autre URL renvoie `404`.
 
 **Champs envoyés par le relais**, en plus du résumé de Mailpit (`ID`, `MessageID`, `From`, `To`, `Cc`, `Bcc`, `ReplyTo`, `Subject`, `Created`, `Size`, `Attachments`, `Tags`, `Snippet`…) :
 
@@ -92,6 +137,8 @@ cp config.example.php config.php
 | `webhook.token` | **obligatoire** : le secret partagé avec le relais, généré avec `openssl rand -hex 32` (32 caractères minimum). La même valeur va dans `RELAY_API_TOKEN` côté relais |
 | `webhook.max_attachment_size` | taille maximale d'une pièce jointe, 5 Mo par défaut |
 | `webhook.max_messages` | nombre de mails gardés, 1000 par défaut (comme `MP_MAX_MESSAGES` côté Mailpit). `0` = sans limite |
+| `app.session_lifetime` | Dashboard : déconnexion après ce nombre de secondes d'inactivité (2 h par défaut) |
+| `app.timezone` | Dashboard : fuseau horaire d'affichage des dates (`Europe/Paris` par défaut) |
 | `debug` | `false` en production |
 
 Générez le jeton une seule fois, puis copiez-le aux deux endroits :
@@ -118,7 +165,21 @@ curl -6 -s https://ifconfig.me; echo
 
 ### 2. Créer les tables
 
-Espace client OVH → **Bases de données** → **…** → **Aller sur phpMyAdmin**. Sélectionnez la base dans la colonne de gauche, puis onglet **Importer** → fichier `sql/schema.sql`. Il crée les tables `mailpit_messages` et `mailpit_parts`.
+Espace client OVH → **Bases de données** → **…** → **Aller sur phpMyAdmin**. Sélectionnez la base dans la colonne de gauche, puis onglet **Importer** → fichier `sql/schema.sql`. Il crée les tables `mailpit_messages`, `mailpit_parts` et `mailpit_message_recipients` (mails), `mailpit_admins` et `mailpit_login_attempts` (Dashboard), `mailpit_tokens` et `mailpit_token_addresses` (jetons développeurs).
+
+> **Mise à jour d'une installation existante** (base créée avant l'arrivée du Dashboard) : importez plutôt `sql/migrations/2026-11-dashboard-tokens.sql`. Il crée les nouvelles tables et y range les destinataires des mails déjà enregistrés. Il peut être importé plusieurs fois sans risque.
+
+### 2 bis. Créer un administrateur du Dashboard
+
+Sur votre ordinateur, dans le dossier `api/` :
+
+```bash
+php bin/create-admin.php
+```
+
+Le script demande un identifiant et un mot de passe (12 caractères minimum), puis affiche une requête SQL `INSERT INTO mailpit_admins …`, avec le mot de passe **haché**. Copiez-la dans phpMyAdmin, onglet **SQL**, puis **Exécuter**. Recommencez pour chaque administrateur. Relancé avec un identifiant existant, le script produit une requête qui **change son mot de passe**.
+
+Pour supprimer un administrateur : supprimez sa ligne dans `mailpit_admins`. Il est déconnecté à sa requête suivante.
 
 ### 3. Envoyer en FTP
 
@@ -126,7 +187,7 @@ Créez par exemple un dossier `api` à la racine FTP de l'hébergement (à côt�
 
 > 💡 Les fichiers qui commencent par un point sont souvent masqués dans les clients FTP. Dans FileZilla : menu **Serveur** → **Forcer l'affichage des fichiers cachés**.
 
-Inutile d'envoyer `README.md`, `sql/` et `config.example.php` (ils sont de toute façon bloqués par le `.htaccess`).
+Envoyez aussi `templates/` (pages du Dashboard). Inutile d'envoyer `README.md`, `bin/`, `sql/` et `config.example.php` (ils sont de toute façon bloqués par le `.htaccess`).
 
 Les dossiers `var/log/` et `var/messages/` doivent être accessibles en écriture par PHP (droits `755` ou `705`, ce qui est le cas par défaut chez OVH). `var/messages/` contiendra toutes les pièces jointes : surveillez l'espace disque de l'hébergement.
 
@@ -211,7 +272,13 @@ swaks --server 127.0.0.1 --port 25 --to essai@test.mondomaine.fr
 
 Le message doit apparaître dans la table `mailpit_messages`.
 
-**Depuis votre ordinateur**, le même `curl` doit renvoyer `403` : le filtre IP fonctionne. Depuis le serveur Mailpit, sans l'en-tête `Authorization` ou avec un mauvais jeton, il doit renvoyer `401`.
+**Depuis votre ordinateur**, le `POST` ci-dessus doit renvoyer `403` : le filtre IP fonctionne. Depuis le serveur Mailpit, sans l'en-tête `Authorization` ou avec un mauvais jeton, il doit renvoyer `401`.
+
+**Dashboard** : ouvrez `https://api.amnesic.dev/v1/app/signin` et connectez-vous avec le compte créé à l'étape 2 bis. Créez un jeton dans **Tokens**, associez-lui `essai@test.mondomaine.fr`, puis, depuis n'importe quelle machine :
+
+```bash
+curl -s 'https://api.amnesic.dev/v1/messages?address=essai@test.mondomaine.fr' -H 'Authorization: Bearer mpt_LE_JETON_AFFICHÉ'
+```
 
 **Fichiers protégés** : `https://api.amnesic.dev/config.php`, `/vendor/autoload.php`, `/.ovhconfig`… doivent tous renvoyer `403` ou `404`.
 
@@ -236,6 +303,12 @@ Le message doit apparaître dans la table `mailpit_messages`.
 | `text_body` toujours vide | Le webhook ne passe pas par le relais (`MP_WEBHOOK_URL` pointe directement sur l'API), ou `sql/schema.sql` n'a pas été importé (erreur `Table … doesn't exist` dans le log) |
 | Mail avec `completed_at` vide | Des pièces sont encore attendues (`status = 'pending'` dans `mailpit_parts`). Le relais les renvoie tout seul : voir ses logs |
 | Page blanche / erreur PHP | Version de PHP trop ancienne : vérifiez `.ovhconfig` (8.4 minimum) |
+| Dashboard : « Trop de tentatives pour cet identifiant » | 3 échecs en moins de 30 minutes pour cet identifiant : attendez la fin du délai affiché. Pour débloquer tout de suite : `DELETE FROM mailpit_login_attempts WHERE username = 'identifiant';` dans phpMyAdmin. Les échecs sont dans `var/log/api.log` (`[signin] …`) |
+| Dashboard : « Formulaire expiré : recommencez » | La page est restée ouverte trop longtemps (session expirée), ou les cookies sont bloqués pour le domaine |
+| Dashboard : erreur `500` avec `Table … doesn't exist` dans le log | La migration `sql/migrations/2026-11-dashboard-tokens.sql` n'a pas été importée |
+| Jeton développeur : `401` | Jeton faux, supprimé, ou envoyé ailleurs que dans l'en-tête `Authorization: Bearer …` (`[api-auth] …` dans `var/log/api.log`) |
+| Jeton développeur : `"total": 0` alors que des mails existent | Aucune adresse associée au jeton, ou l'adresse ne correspond à aucun destinataire `To` / `Cc` / `Bcc` |
+| Jeton développeur : `403` | `?address=` désigne une adresse qui n'est pas associée au jeton |
 
 Le fichier `var/log/api.log` n'est pas vidé automatiquement : supprimez-le de temps en temps par FTP.
 
@@ -249,10 +322,15 @@ Le fichier `var/log/api.log` n'est pas vidé automatiquement : supprimez-le de t
 -- Derniers mails reçus
 SELECT created_at, from_address, subject FROM mailpit_messages ORDER BY created_at DESC LIMIT 20;
 
--- Mails envoyés à une adresse donnée
-SELECT created_at, subject FROM mailpit_messages
-WHERE JSON_CONTAINS(to_addresses, JSON_OBJECT('address', 'essai@test.mondomaine.fr'))
-ORDER BY created_at DESC;
+-- Mails reçus par une adresse donnée (To, Cc ou Bcc)
+SELECT m.created_at, m.subject FROM mailpit_messages m
+JOIN mailpit_message_recipients r ON r.message_id = m.id
+WHERE r.address = 'essai@test.mondomaine.fr'
+ORDER BY m.created_at DESC;
+
+-- Jetons développeurs et leurs adresses
+SELECT t.id, t.name, t.last_used_at, a.address FROM mailpit_tokens t
+LEFT JOIN mailpit_token_addresses a ON a.token_id = t.id ORDER BY t.id, a.address;
 
 -- Pièces jointes d'un mail, avec le fichier correspondant dans var/messages/
 SELECT p.file_name, p.content_type, p.size, p.status, p.storage_path
@@ -266,29 +344,50 @@ SELECT mailpit_id, received_at, subject FROM mailpit_messages WHERE completed_at
 SELECT subject, headers->>'$."X-Mailer"[0]' AS mailer FROM mailpit_messages ORDER BY id DESC LIMIT 10;
 ```
 
-## Lister les mails
+## Dashboard
 
-`GET /v1/messages` renvoie les mails enregistrés, du plus récent au plus ancien (date de réception par Mailpit), avec la description de leurs pièces jointes. Le corps (texte, HTML) et les en-têtes n'y sont pas, pour garder la réponse légère.
+`https://api.amnesic.dev/v1/app/signin`, avec un compte de la table `mailpit_admins` ([étape 2 bis](#2-bis-créer-un-administrateur-du-dashboard)).
 
-Comme les autres routes, elle exige le jeton et n'est accessible que depuis les IP de `webhook.allowed_ips`. Pour l'appeler depuis une autre machine, ajoutez son IP à cette liste.
+- **Messages** : tous les mails enregistrés, du plus récent au plus ancien, 50 par page : date de réception, expéditeur, destinataires (`To`, `Cc`, `Bcc`), sujet et début du texte, nombre de pièces jointes. Un mail dont des pièces sont encore attendues est marqué « incomplet ».
+- **Tokens** : création (un nom suffit) et suppression des jetons développeurs. Un jeton supprimé est refusé (`401`) dès l'appel suivant.
+- **Détail d'un jeton** : associer ou retirer des adresses, et voir combien de mails chacune a reçus.
+
+> ⚠️ **Le jeton n'est affiché qu'une fois**, juste après sa création. Seule son empreinte SHA-256 est gardée en base : s'il est perdu, supprimez-le et créez-en un autre.
+
+**Sécurité.** Connexion limitée à **3 échecs par identifiant sur 30 minutes** : au-delà, l'identifiant est bloqué (`429`) jusqu'à 30 minutes après le premier des trois échecs, même avec le bon mot de passe. Une connexion réussie remet le compteur à zéro. Un identifiant inexistant est traité de la même façon, pour ne pas révéler quels comptes existent. Les autres protections : mots de passe hachés (`password_hash`), cookie de session `HttpOnly`, `SameSite=Strict` et `Secure` en HTTPS, limité au chemin `/v1/app`, jeton anti-CSRF dans chaque formulaire, déconnexion après 2 h d'inactivité (`app.session_lifetime`), pages jamais mises en cache ni affichables dans une iframe.
+
+Le Dashboard est accessible depuis **n'importe quelle IP** : `webhook.allowed_ips` ne concerne que le relais.
+
+## Jetons développeurs
+
+Un développeur reçoit un jeton `mpt_…` et la liste des adresses de test qui lui sont associées. Il l'envoie dans l'en-tête `Authorization: Bearer …`, depuis n'importe quelle IP.
+
+Le jeton voit les mails dont l'un des destinataires (`To`, `Cc` ou `Bcc`) est une de ses adresses. Les adresses sont comparées sans tenir compte des majuscules. Une adresse peut être associée à plusieurs jetons.
+
+### Lire les mails : `GET /v1/messages`
 
 | Paramètre | Défaut | Rôle |
 |---|---|---|
-| `limit` | `1000` | nombre de mails renvoyés (1 à 1000) |
-| `offset` | `0` | nombre de mails à sauter, pour paginer |
-
-Avec la rétention par défaut (1000 mails), un seul appel renvoie **tous** les mails.
+| `address` | toutes les adresses du jeton | une seule de ses adresses (`403` si elle ne lui est pas associée) |
+| `limit` | `5` | nombre de mails renvoyés (1 à 25) |
+| `offset` | `0` | nombre de mails à sauter |
+| `page` | `1` | numéro de page, à la place d'`offset` : `offset = (page - 1) × limit`. Les deux ensemble : `400` |
 
 ```bash
-curl -4 -s 'https://api.amnesic.dev/v1/messages?limit=50&offset=0' -H 'Authorization: Bearer LE_JETON_DE_CONFIG_PHP'
+# Le dernier mail reçu par une adresse (ex. pour y lire un code de confirmation)
+curl -s 'https://api.amnesic.dev/v1/messages?address=essai@test.mondomaine.fr&limit=1' -H 'Authorization: Bearer mpt_…'
+
+# Les mails 26 à 50 de toutes les adresses du jeton
+curl -s 'https://api.amnesic.dev/v1/messages?limit=25&page=2' -H 'Authorization: Bearer mpt_…'
 ```
 
 ```json
 {
-  "total": 2,
-  "count": 2,
-  "limit": 50,
+  "total": 12,
+  "count": 1,
+  "limit": 1,
   "offset": 0,
+  "page": 1,
   "messages": [
     {
       "id": "2qGgGUqCw5N3mAOHzyFGoJ",
@@ -296,8 +395,8 @@ curl -4 -s 'https://api.amnesic.dev/v1/messages?limit=50&offset=0' -H 'Authoriza
       "from": { "name": "Alice", "address": "alice@exemple.fr" },
       "to": [ { "name": "", "address": "essai@test.mondomaine.fr" } ],
       "cc": [], "bcc": [], "reply_to": [],
-      "subject": "Devis",
-      "snippet": "Bonjour, voici le devis…",
+      "subject": "Votre code",
+      "snippet": "Votre code de confirmation : 482913",
       "return_path": "alice@exemple.fr",
       "tags": [],
       "size": 1053210,
@@ -311,7 +410,9 @@ curl -4 -s 'https://api.amnesic.dev/v1/messages?limit=50&offset=0' -H 'Authoriza
       "parts": [
         { "part_id": "2", "kind": "attachment", "file_name": "devis.pdf", "content_type": "application/pdf",
           "content_id": "", "size": 1048576, "status": "stored" }
-      ]
+      ],
+      "text": "Votre code de confirmation : 482913\n",
+      "html": "<p>Votre code de confirmation : <b>482913</b></p>"
     }
   ]
 }
@@ -319,11 +420,39 @@ curl -4 -s 'https://api.amnesic.dev/v1/messages?limit=50&offset=0' -H 'Authoriza
 
 | Champ | Contenu |
 |---|---|
-| `id` | ID du mail dans Mailpit (colonne `mailpit_id`), utilisé aussi pour son dossier `var/messages/<id>/` |
+| `total` | nombre de mails correspondants (toutes pages confondues) · `count` : nombre de mails dans cette réponse |
+| `id` | ID du mail dans Mailpit : c'est lui qu'attend `DELETE /v1/messages/{id}` |
 | `date` | en-tête `Date` du mail · `created_at` : réception par Mailpit · `received_at` : réception par l'API (UTC, ISO 8601) |
+| `text`, `html` | corps du mail, ou `null` s'il n'a pas été envoyé par le relais (webhook direct de Mailpit) |
 | `complete` | `true` quand toutes les pièces attendues sont enregistrées |
-| `parts[].status` | `stored` (fichier `var/messages/<id>/part-<part_id>`), `pending` (pas encore reçue) ou `too_large` (au-delà de la limite, non enregistrée) |
+| `parts[].status` | `stored` (enregistrée), `pending` (pas encore reçue) ou `too_large` (au-delà de la limite, non enregistrée). Le contenu des pièces n'est pas téléchargeable par l'API |
 | `label`, `username` | en-tête `Mailpit-Label` (`RELAY_LABEL`) et utilisateur SMTP authentifié, ou `null` |
+
+### Ses adresses : `GET /v1/addresses`
+
+```bash
+curl -s 'https://api.amnesic.dev/v1/addresses' -H 'Authorization: Bearer mpt_…'
+```
+
+```json
+{ "count": 2, "addresses": [ { "address": "alice@test.mondomaine.fr", "messages": 3 }, { "address": "essai@test.mondomaine.fr", "messages": 0 } ] }
+```
+
+### Supprimer des mails
+
+```bash
+# Un mail
+curl -s -X DELETE 'https://api.amnesic.dev/v1/messages/2qGgGUqCw5N3mAOHzyFGoJ' -H 'Authorization: Bearer mpt_…'
+
+# Tous les mails d'une adresse (par exemple avant de lancer un test)
+curl -s -X DELETE 'https://api.amnesic.dev/v1/addresses?address=essai@test.mondomaine.fr' -H 'Authorization: Bearer mpt_…'
+```
+
+La suppression efface le mail de la base et ses pièces jointes de `var/messages/`. Bon à savoir :
+
+- un mail envoyé à **plusieurs** adresses est supprimé pour toutes, y compris pour les autres jetons qui le voyaient ;
+- le mail reste dans **Mailpit** : seule la copie de l'API est supprimée ;
+- `DELETE /v1/addresses` ne retire pas l'adresse du jeton : seul le Dashboard le fait.
 
 ## Rétention : les 1000 derniers mails
 
@@ -331,8 +460,8 @@ curl -4 -s 'https://api.amnesic.dev/v1/messages?limit=50&offset=0' -H 'Authoriza
 
 Gardez la même valeur que `MP_MAX_MESSAGES` côté Mailpit ([Partie 1, étape 3](../docs/mailpit/01-podman.md#étape-3--créer-le-fichier-de-configuration-de-mailpit)) : Mailpit et l'API conservent alors les mêmes mails.
 
-Pour supprimer un mail à la main, supprimez sa ligne dans `mailpit_messages` (ses lignes de `mailpit_parts` partent avec elle) et son dossier `var/messages/<mailpit_id>/` par FTP.
+Pour supprimer un mail à la main, supprimez sa ligne dans `mailpit_messages` (ses lignes de `mailpit_parts` et `mailpit_message_recipients` partent avec elle) et son dossier `var/messages/<mailpit_id>/` par FTP. Plus simple : un jeton développeur associé à son adresse peut le supprimer, base et fichiers (`DELETE /v1/messages/{id}`).
 
 ## Derrière un proxy ou un CDN
 
-Sur un hébergement OVH sans option CDN, l'IP du client est dans `REMOTE_ADDR` : laissez `proxy.trusted_proxies` vide. Si vous activez un CDN devant l'API, listez ses adresses dans `proxy.trusted_proxies`. L'IP réelle sera alors lue dans `X-Forwarded-For`, mais **uniquement** pour les requêtes qui viennent de ces adresses. Sans cette précaution, n'importe qui pourrait envoyer un faux en-tête pour se faire passer pour le serveur Mailpit.
+Sur un hébergement OVH sans option CDN, l'IP du client est dans `REMOTE_ADDR` : laissez `proxy.trusted_proxies` vide. Cette IP sert au filtre du relais et apparaît dans le journal des connexions au Dashboard. Si vous activez un CDN devant l'API, listez ses adresses dans `proxy.trusted_proxies`. L'IP réelle sera alors lue dans `X-Forwarded-For`, mais **uniquement** pour les requêtes qui viennent de ces adresses. Sans cette précaution, n'importe qui pourrait envoyer un faux en-tête pour se faire passer pour le serveur Mailpit.

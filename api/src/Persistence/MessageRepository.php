@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Persistence;
 
+use App\Mailpit\Address;
 use App\Mailpit\Message;
 use DateTimeImmutable;
 use DateTimeZone;
@@ -11,7 +12,7 @@ use PDO;
 use Throwable;
 
 /**
- * Accès aux tables mailpit_messages et mailpit_parts.
+ * Accès aux tables mailpit_messages, mailpit_parts et mailpit_message_recipients.
  *
  * Un mail est « complet » (colonne completed_at) quand toutes les pièces annoncées
  * sont enregistrées, ou ignorées parce qu'elles dépassent la limite de taille.
@@ -114,6 +115,8 @@ final readonly class MessageRepository
             $lookup = $pdo->prepare('SELECT id FROM mailpit_messages WHERE mailpit_id = ? FOR UPDATE');
             $lookup->execute([$message->id]);
             $messagePk = (int) $lookup->fetchColumn();
+
+            $this->saveRecipients($pdo, $messagePk, $message);
 
             $insertPart = $pdo->prepare(self::UPSERT_PART);
             foreach ($message->parts as $part) {
@@ -218,25 +221,51 @@ final readonly class MessageRepository
 
     /**
      * Liste des messages, du plus récent au plus ancien (date de réception par Mailpit),
-     * avec la description de leurs pièces. Sans le corps ni les en-têtes, pour rester léger.
+     * avec la description de leurs pièces. Sans les en-têtes, pour rester léger.
      *
+     * @param list<string>|null $addresses ne garde que les mails dont un destinataire (To, Cc, Bcc)
+     *                                     est dans cette liste ; null = tous les mails
+     * @param bool $withBodies ajoute le corps du mail (« text », « html »)
      * @return array{total: int, messages: list<array<string, mixed>>}
      */
-    public function list(int $limit, int $offset): array
+    public function list(int $limit, int $offset, ?array $addresses = null, bool $withBodies = false): array
     {
-        $pdo = $this->database->pdo();
-        $total = (int) $pdo->query('SELECT COUNT(*) FROM mailpit_messages')->fetchColumn();
+        if ($addresses === []) {
+            return ['total' => 0, 'messages' => []];
+        }
 
-        $statement = $pdo->prepare(<<<'SQL'
+        $pdo = $this->database->pdo();
+
+        $where = '';
+        $params = [];
+        if ($addresses !== null) {
+            $where = sprintf(
+                'WHERE id IN (SELECT message_id FROM mailpit_message_recipients WHERE address IN (%s))',
+                implode(',', array_fill(0, count($addresses), '?')),
+            );
+            $params = array_values($addresses);
+        }
+
+        $count = $pdo->prepare("SELECT COUNT(*) FROM mailpit_messages $where");
+        $count->execute($params);
+        $total = (int) $count->fetchColumn();
+
+        $bodies = $withBodies ? ', text_body, html_body' : '';
+        $statement = $pdo->prepare(<<<SQL
             SELECT id, mailpit_id, message_id, from_name, from_address, to_addresses, cc_addresses,
                    bcc_addresses, reply_to, subject, snippet, return_path, message_date, tags, size,
-                   attachments, smtp_username, mailpit_label, created_at, received_at, completed_at
+                   attachments, smtp_username, mailpit_label, created_at, received_at, completed_at$bodies
             FROM mailpit_messages
+            $where
             ORDER BY created_at DESC, id DESC
             LIMIT ? OFFSET ?
             SQL);
-        $statement->bindValue(1, $limit, PDO::PARAM_INT);
-        $statement->bindValue(2, $offset, PDO::PARAM_INT);
+        $position = 1;
+        foreach ($params as $param) {
+            $statement->bindValue($position++, $param);
+        }
+        $statement->bindValue($position++, $limit, PDO::PARAM_INT);
+        $statement->bindValue($position, $offset, PDO::PARAM_INT);
         $statement->execute();
         $rows = $statement->fetchAll();
 
@@ -287,15 +316,137 @@ final readonly class MessageRepository
             'received_at' => self::isoDate($row['received_at']),
             'complete'    => $row['completed_at'] !== null,
             'parts'       => $parts[(int) $row['id']] ?? [],
-        ], $rows);
+        ] + ($withBodies ? [
+            'text' => $row['text_body'],
+            'html' => $row['html_body'],
+        ] : []), $rows);
 
         return ['total' => $total, 'messages' => $messages];
+    }
+
+    /**
+     * Nombre de mails reçus par chacune des adresses.
+     *
+     * @param list<string> $addresses
+     * @return array<string, int> adresse => nombre de mails
+     */
+    public function countByAddress(array $addresses): array
+    {
+        $counts = array_fill_keys($addresses, 0);
+        if ($addresses === []) {
+            return $counts;
+        }
+
+        $statement = $this->database->pdo()->prepare(sprintf(
+            'SELECT address, COUNT(*) AS total FROM mailpit_message_recipients WHERE address IN (%s) GROUP BY address',
+            implode(',', array_fill(0, count($addresses), '?')),
+        ));
+        $statement->execute(array_values($addresses));
+        foreach ($statement->fetchAll() as $row) {
+            $address = Address::normalize((string) $row['address']);
+            if (array_key_exists($address, $counts)) {
+                $counts[$address] = (int) $row['total'];
+            }
+        }
+
+        return $counts;
+    }
+
+    /**
+     * Supprime un mail (ses pièces et destinataires partent avec lui : ON DELETE CASCADE).
+     *
+     * @param list<string>|null $addresses le mail n'est supprimé que si l'un de ses destinataires
+     *                                     est dans cette liste ; null = sans condition
+     * @return bool false si le mail est inconnu (ou hors des adresses autorisées)
+     */
+    public function delete(string $mailpitId, ?array $addresses = null): bool
+    {
+        if ($addresses === []) {
+            return false;
+        }
+
+        return $this->transaction(function (PDO $pdo) use ($mailpitId, $addresses): bool {
+            $sql = 'SELECT id FROM mailpit_messages WHERE mailpit_id = ?';
+            $params = [$mailpitId];
+            if ($addresses !== null) {
+                $sql .= sprintf(
+                    ' AND id IN (SELECT message_id FROM mailpit_message_recipients WHERE address IN (%s))',
+                    implode(',', array_fill(0, count($addresses), '?')),
+                );
+                $params = [...$params, ...array_values($addresses)];
+            }
+            $select = $pdo->prepare($sql . ' FOR UPDATE');
+            $select->execute($params);
+            $pk = $select->fetchColumn();
+            if ($pk === false) {
+                return false;
+            }
+
+            $pdo->prepare('DELETE FROM mailpit_messages WHERE id = ?')->execute([(int) $pk]);
+
+            return true;
+        });
+    }
+
+    /**
+     * Supprime tous les mails reçus par une adresse (To, Cc ou Bcc).
+     * Un mail envoyé à plusieurs adresses est supprimé pour toutes.
+     *
+     * @return list<string> ID Mailpit des mails supprimés, pour effacer leurs fichiers
+     */
+    public function deleteByAddress(string $address): array
+    {
+        return $this->transaction(function (PDO $pdo) use ($address): array {
+            $select = $pdo->prepare(<<<'SQL'
+                SELECT m.id, m.mailpit_id
+                FROM mailpit_messages m
+                JOIN mailpit_message_recipients r ON r.message_id = m.id
+                WHERE r.address = ?
+                FOR UPDATE
+                SQL);
+            $select->execute([$address]);
+            $rows = $select->fetchAll();
+            if ($rows === []) {
+                return [];
+            }
+
+            $ids = array_map(static fn (array $row): int => (int) $row['id'], $rows);
+            foreach (array_chunk($ids, 500) as $chunk) {
+                $placeholders = implode(',', array_fill(0, count($chunk), '?'));
+                $pdo->prepare("DELETE FROM mailpit_messages WHERE id IN ($placeholders)")->execute($chunk);
+            }
+
+            return array_map(static fn (array $row): string => (string) $row['mailpit_id'], $rows);
+        });
     }
 
     /** @return array{complete: bool, missing: list<string>, too_large: list<string>} */
     public function completion(int $messagePk): array
     {
         return $this->transaction(fn (PDO $pdo): array => $this->refreshCompletion($pdo, $messagePk));
+    }
+
+    /** Enregistre les destinataires (To, Cc, Bcc) du message, en minuscules. Sans effet s'ils sont déjà connus. */
+    private function saveRecipients(PDO $pdo, int $messagePk, Message $message): void
+    {
+        $addresses = [];
+        foreach ([...$message->to, ...$message->cc, ...$message->bcc] as $recipient) {
+            $address = Address::normalize($recipient['address']);
+            if ($address !== '') {
+                $addresses[mb_substr($address, 0, Address::MAX_LENGTH)] = true;
+            }
+        }
+        if ($addresses === []) {
+            return;
+        }
+
+        $values = implode(',', array_fill(0, count($addresses), '(?, ?)'));
+        $params = [];
+        foreach (array_keys($addresses) as $address) {
+            $params[] = $messagePk;
+            $params[] = (string) $address;
+        }
+        $pdo->prepare("INSERT IGNORE INTO mailpit_message_recipients (message_id, address) VALUES $values")->execute($params);
     }
 
     /**

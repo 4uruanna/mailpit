@@ -106,7 +106,7 @@ Ce jeton servira à nouveau en phase 2 et en phase 3. Conservez-le dans un gesti
 Depuis votre ordinateur, dont l'IP n'est **pas** autorisée :
 
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' https://api.mondomaine.fr/v1/messages
+curl -s -o /dev/null -w '%{http_code}\n' -X POST https://api.mondomaine.fr/v1/messages
 ```
 
 ✅ Attendu : `403`. Ce seul test vérifie quatre choses à la fois : le DNS, le certificat SSL, le chargement de PHP, de `vendor/` et de `config.php`, et le filtre IP.
@@ -117,14 +117,16 @@ curl -s -o /dev/null -w '%{http_code}\n' https://api.mondomaine.fr/v1/messages
 | `000` + erreur SSL (relancez sans `-s -o /dev/null` pour la voir) | Certificat pas encore généré : attendez, ou regénérez-le dans l'espace client |
 | `404` | Mauvais dossier racine du multisite, ou `.htaccess` non envoyés |
 | `500` | `vendor/` ou `config.php` absent, ou `config.php` invalide. Le détail est dans `api/var/log/api.log` (FTP) |
-| `200` | ⚠️ Le filtre IP ne fonctionne pas. Votre IP est-elle par erreur dans `allowed_ips` ? |
+| `401` | ⚠️ Le filtre IP ne fonctionne pas. Votre IP est-elle par erreur dans `allowed_ips` ? |
+
+> ℹ️ Le filtre IP ne protège que les routes du **relais** (envoi des mails, `POST`). Les routes des jetons développeurs (`GET /v1/messages`, `/v1/addresses`…) et le Dashboard (`/v1/app/…`) sont ouverts à toutes les IP : sans jeton, `GET /v1/messages` répond donc `401`, et non `403`.
 
 ### Étape 1.4 — 🖥️ Serveur : les fichiers sensibles sont inaccessibles
 
-Faites ce test **depuis le serveur Mailpit**, et non depuis votre ordinateur. Depuis une IP non autorisée, le filtre IP de l'API répond `403` à toutes les URL. Ce `403` cacherait un fichier qu'Apache servirait directement, sans passer par PHP. Depuis le serveur, le filtre laisse passer : on voit donc si les fichiers sont **vraiment** protégés.
+Faites ce test **depuis le serveur Mailpit** (il fonctionne aussi depuis votre ordinateur, le filtre IP ne protégeant que les routes du relais). On vérifie que les fichiers sont **vraiment** protégés : un fichier qu'Apache servirait directement, sans passer par PHP, répondrait `200`.
 
 ```bash
-for p in config.php .ovhconfig .htaccess composer.json composer.lock vendor/autoload.php src/Kernel.php sql/schema.sql var/log/api.log public/.htaccess; do
+for p in config.php .ovhconfig .htaccess composer.json composer.lock vendor/autoload.php src/Kernel.php sql/schema.sql var/log/api.log public/.htaccess templates/layout.php bin/create-admin.php; do
   printf '%-22s ' "$p"; curl -4 -s -o /dev/null -w '%{http_code}\n' "https://api.mondomaine.fr/$p"
 done
 ```

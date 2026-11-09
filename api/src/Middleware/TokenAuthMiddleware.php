@@ -48,7 +48,8 @@ final readonly class TokenAuthMiddleware implements MiddlewareInterface
         return $handler->handle($request);
     }
 
-    private static function bearer(ServerRequestInterface $request): ?string
+    /** Jeton de l'en-tête « Authorization: Bearer … », ou null. */
+    public static function bearer(ServerRequestInterface $request): ?string
     {
         // Sur un hébergement Apache + PHP-FPM (OVH), l'en-tête Authorization n'arrive pas
         // toujours tel quel : le .htaccess le recopie dans HTTP_AUTHORIZATION.

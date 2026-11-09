@@ -65,6 +65,16 @@ return [
         'storage_dir' => __DIR__ . '/var/messages',
     ],
 
+    // Dashboard des administrateurs (https://api.amnesic.dev/v1/app/signin).
+    // Les comptes sont dans la table mailpit_admins : voir « php bin/create-admin.php » dans le README.
+    'app' => [
+        // Déconnexion automatique après ce nombre de secondes d'inactivité.
+        'session_lifetime' => 2 * 60 * 60,
+
+        // Fuseau horaire d'affichage des dates (elles sont stockées en UTC).
+        'timezone' => 'Europe/Paris',
+    ],
+
     // À laisser vide sur un hébergement OVH classique : l'IP du client est dans REMOTE_ADDR.
     // Si un proxy / CDN est placé devant l'API, listez ses IP (ou plages CIDR) :
     // l'IP du client sera alors lue dans l'en-tête indiqué, uniquement pour les

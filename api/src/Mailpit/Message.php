@@ -28,6 +28,9 @@ use Exception;
  *   "Parts": [{"PartID": "2", "Kind": "attachment", "FileName": "devis.pdf",
  *              "ContentType": "application/pdf", "ContentID": "", "Size": 123456}, …]
  * Le contenu des pièces (Parts) est envoyé ensuite, une requête par pièce.
+ *
+ * Un mail trop volumineux pour max_body_size (413) est renvoyé par le relais en version tronquée
+ * (HTML, texte, voire en-têtes raccourcis), avec en plus "Truncated": true.
  */
 final readonly class Message
 {
@@ -70,6 +73,8 @@ final readonly class Message
         /** Tous les en-têtes du mail (nom => valeurs), envoyés par le relais. */
         public ?array $headers = null,
         public array $parts = [],
+        /** Version raccourcie par le relais : le mail complet dépassait max_body_size. */
+        public bool $truncated = false,
     ) {
     }
 
@@ -115,6 +120,7 @@ final readonly class Message
             date: self::optionalDate($data, 'Date'),
             headers: self::headers($data),
             parts: self::parts($data),
+            truncated: self::optionalBool($data, 'Truncated'),
         );
     }
 
@@ -198,6 +204,17 @@ final readonly class Message
         }
 
         return array_values($parts);
+    }
+
+    /** Booléen facultatif : absent ou null = false. */
+    private static function optionalBool(array $data, string $key): bool
+    {
+        $value = $data[$key] ?? false;
+        if (!is_bool($value)) {
+            throw new InvalidPayloadException(sprintf('champ « %s » : booléen attendu', $key));
+        }
+
+        return $value;
     }
 
     private static function optionalString(array $data, string $key): ?string

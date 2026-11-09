@@ -14,7 +14,10 @@ namespace Relay;
  */
 final readonly class ApiClient
 {
-    /** Refus du message que réessayer ne changera pas. */
+    /**
+     * Refus du message que réessayer ne changera pas. 413 (trop volumineux) n'en fait partie
+     * qu'après les envois tronqués (voir MessageTruncator).
+     */
     private const array PERMANENT_MESSAGE_ERRORS = [400, 413, 415, 422];
 
     /**
@@ -28,6 +31,10 @@ final readonly class ApiClient
     }
 
     /**
+     * Envoie le mail. S'il est trop volumineux pour l'API (413), renvoie une version tronquée qui
+     * tient dans la limite annoncée (MessageTruncator), au plus MessageTruncator::MAX_ATTEMPTS fois ;
+     * un dernier 413 est un refus définitif.
+     *
      * @param array<string, mixed> $message
      * @return array{complete: bool, missing: list<string>, too_large: list<string>}
      * @throws TransientException|PermanentException
@@ -35,15 +42,44 @@ final readonly class ApiClient
     public function postMessage(array $message, ?string $label): array
     {
         $headers = ['Content-Type: application/json', ...$this->labelHeader($label)];
+        $url = $this->config->apiUrl . '/v1/messages';
+        $id = (string) ($message['ID'] ?? '');
 
-        $response = $this->send(
-            'POST',
-            $this->config->apiUrl . '/v1/messages',
-            $headers,
-            json_encode($message, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR),
-        );
+        $body = MessageTruncator::encode($message);
+        $originalSize = strlen($body);
+        $what = 'API (message)';
 
-        return $this->state($response, 'API (message)', self::PERMANENT_MESSAGE_ERRORS);
+        for ($attempt = 1; ; $attempt++) {
+            $response = $this->send('POST', $url, $headers, $body);
+            if ($response['status'] !== 413 || $attempt > MessageTruncator::MAX_ATTEMPTS) {
+                break;
+            }
+
+            // Trop volumineux : une version plus courte, toujours tirée du mail d'origine.
+            $limit = MessageTruncator::reportedLimit($response['body']);
+            $truncated = MessageTruncator::truncate($message, MessageTruncator::budget(strlen($body), $limit));
+            if ($truncated === null) {
+                throw new PermanentException(sprintf(
+                    '%s : HTTP 413, mail trop volumineux même sans corps ni en-têtes (%d octets)',
+                    $what,
+                    $originalSize,
+                ));
+            }
+
+            $body = MessageTruncator::encode($truncated);
+            $what = 'API (message tronqué)';
+            Log::warning(sprintf(
+                'mail %s trop volumineux pour l\'API (%d octets, limite %s) : envoi d\'une version tronquée de %d octets (essai %d/%d)',
+                $id,
+                $originalSize,
+                $limit === null ? 'non indiquée' : $limit . ' octets',
+                strlen($body),
+                $attempt,
+                MessageTruncator::MAX_ATTEMPTS,
+            ));
+        }
+
+        return $this->state($response, $what, self::PERMANENT_MESSAGE_ERRORS);
     }
 
     /**

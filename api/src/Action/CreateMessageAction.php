@@ -21,7 +21,12 @@ use Psr\Http\Message\ServerRequestInterface;
  * Réponses :
  *   201 {"status":"created", "id":"…", "complete":false, "missing":["2","1.3"], "too_large":["4"]}
  *   200 {"status":"updated"|"duplicate", …}   déjà connu (même ID Mailpit)
- *   400 / 413 / 415 / 422                     requête invalide
+ *   413 {"error":"…", "max_body_size":N}      trop volumineux : N = limite en octets, pour que le
+ *                                             relais renvoie une version tronquée qui tient
+ *   400 / 415 / 422                           requête invalide
+ *
+ * Si l'hébergement vide le corps parce qu'il dépasse post_max_size (Content-Length annoncé, mais
+ * corps vide), la réponse est aussi 413, avec la limite effective min(max_body_size, post_max_size).
  *
  * « missing » liste les pièces annoncées dans « Parts » dont le contenu est attendu
  * (POST /v1/messages/{id}/part/{partId}). « too_large » liste celles qui dépassent
@@ -39,7 +44,17 @@ final readonly class CreateMessageAction
         private int $maxBodySize,
         private int $maxPartSize,
         private int $maxMessages,
+        /** post_max_size de PHP (octets), 0 = pas de limite. Voir postMaxSize(). */
+        private int $postMaxSize = 0,
     ) {
+    }
+
+    /** post_max_size de PHP en octets (« 8M » => 8388608), 0 = pas de limite. */
+    public static function postMaxSize(): int
+    {
+        $value = ini_get('post_max_size');
+
+        return $value === false || trim($value) === '' ? 0 : max(0, ini_parse_quantity($value));
     }
 
     public function __invoke(ServerRequestInterface $request): ResponseInterface
@@ -49,9 +64,9 @@ final readonly class CreateMessageAction
             return $this->error(415, 'Content-Type application/json attendu');
         }
 
-        $declaredLength = $request->getHeaderLine('Content-Length');
-        if ($declaredLength !== '' && (int) $declaredLength > $this->maxBodySize) {
-            return $this->error(413, 'corps de requête trop volumineux');
+        $declaredLength = (int) $request->getHeaderLine('Content-Length');
+        if ($declaredLength > $this->maxBodySize) {
+            return $this->tooLarge($this->maxBodySize);
         }
 
         // Lecture bornée : on ne charge jamais plus de max_body_size + 1 octets.
@@ -65,7 +80,22 @@ final readonly class CreateMessageAction
             $json .= $chunk;
         }
         if (strlen($json) > $this->maxBodySize) {
-            return $this->error(413, 'corps de requête trop volumineux');
+            return $this->tooLarge($this->maxBodySize);
+        }
+
+        // Corps annoncé mais vide : selon l'hébergement, PHP le vide quand il dépasse post_max_size.
+        // Un « JSON invalide » (400, refus définitif) ne dirait pas quoi faire : 413 avec la limite
+        // effective, pour que le relais renvoie une version tronquée.
+        if ($json === '' && $declaredLength > 0) {
+            $limit = $this->postMaxSize > 0 ? min($this->maxBodySize, $this->postMaxSize) : $this->maxBodySize;
+            error_log(sprintf(
+                '[messages] corps vide alors que Content-Length annonce %d octets (post_max_size : %s, max_body_size : %d) : 413',
+                $declaredLength,
+                $this->postMaxSize > 0 ? $this->postMaxSize . ' octets' : 'sans limite',
+                $this->maxBodySize,
+            ));
+
+            return $this->tooLarge($limit, sprintf('corps de requête vide alors que Content-Length annonce %d octets (limite post_max_size de PHP ?)', $declaredLength));
         }
 
         try {
@@ -133,6 +163,12 @@ final readonly class CreateMessageAction
                 error_log(sprintf('[prune] fichiers de %s pas tous effacés', $mailpitId));
             }
         }
+    }
+
+    /** 413 avec la limite (octets) que le corps doit respecter : le relais tronque le mail en conséquence. */
+    private function tooLarge(int $limit, string $message = 'corps de requête trop volumineux'): ResponseInterface
+    {
+        return Json::response($this->responseFactory, 413, ['error' => $message, 'max_body_size' => $limit]);
     }
 
     private function error(int $status, string $message): ResponseInterface

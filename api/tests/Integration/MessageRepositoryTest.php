@@ -76,6 +76,64 @@ final class MessageRepositoryTest extends DatabaseTestCase
         self::assertSame(['Subject' => ['Sujet m1']], $message['headers'] ?? null);
     }
 
+    public function testTruncatedThenFullMessageReplacesTheBody(): void
+    {
+        $truncated = ['Text' => 'Texte cou', 'HTML' => '<p>cou</p>', 'Headers' => ['Subject' => ['Suj…']], 'Truncated' => true] + self::payload('m1');
+        self::assertSame('created', $this->save($truncated)['status']);
+        self::assertTrue($this->repository->find('m1')['truncated'] ?? null);
+
+        // Le même mail tronqué une seconde fois : rien ne change.
+        self::assertSame('duplicate', $this->save($truncated)['status']);
+
+        // La version complète (ex. max_body_size augmenté, mail relayé à nouveau) remplace tout.
+        self::assertSame('updated', $this->save(self::payload('m1'))['status']);
+        $message = $this->repository->find('m1');
+        self::assertFalse($message['truncated'] ?? null);
+        self::assertSame('Texte de m1', $message['text'] ?? null);
+        self::assertSame('<p>HTML de m1</p>', $message['html'] ?? null);
+        self::assertSame(['Subject' => ['Sujet m1']], $message['headers'] ?? null);
+    }
+
+    public function testTruncatedVersionNeverReplacesTheFullBody(): void
+    {
+        $this->save(self::payload('m1'));
+
+        $result = $this->save(['Text' => 'Texte cou', 'HTML' => '<p>cou</p>', 'Truncated' => true] + self::payload('m1'));
+
+        self::assertSame('duplicate', $result['status']);
+        $message = $this->repository->find('m1');
+        self::assertFalse($message['truncated'] ?? null);
+        self::assertSame('Texte de m1', $message['text'] ?? null);
+        self::assertSame('<p>HTML de m1</p>', $message['html'] ?? null);
+    }
+
+    public function testSummaryThenTruncatedMessageIsTruncated(): void
+    {
+        // Résumé seul (ancien webhook direct), sans corps : la version tronquée apporte le corps.
+        $this->save(array_diff_key(self::payload('m1'), ['Text' => 0, 'HTML' => 0, 'Headers' => 0]));
+
+        $result = $this->save(['Text' => 'Texte cou', 'Truncated' => true] + self::payload('m1'));
+
+        self::assertSame('updated', $result['status']);
+        $message = $this->repository->find('m1');
+        self::assertTrue($message['truncated'] ?? null);
+        self::assertSame('Texte cou', $message['text'] ?? null);
+        self::assertSame([true], array_column($this->repository->list(10, 0)['messages'], 'truncated'));
+    }
+
+    public function testSummaryAfterTruncatedMessageKeepsTheFlag(): void
+    {
+        $this->save(['Text' => 'Texte cou', 'Truncated' => true] + self::payload('m1'));
+
+        // Résumé seul, sans corps ni « Truncated » : le corps tronqué reste, le drapeau aussi.
+        $result = $this->save(array_diff_key(self::payload('m1'), ['Text' => 0, 'HTML' => 0, 'Headers' => 0]));
+
+        self::assertSame('duplicate', $result['status']);
+        $message = $this->repository->find('m1');
+        self::assertTrue($message['truncated'] ?? null);
+        self::assertSame('Texte cou', $message['text'] ?? null);
+    }
+
     public function testPartsPendingAndTooLarge(): void
     {
         $result = $this->save(self::payload('m1', parts: [['2', 10], ['3', self::MAX_PART_SIZE + 1], ['1.2', self::MAX_PART_SIZE]]));

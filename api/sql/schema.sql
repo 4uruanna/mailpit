@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS mailpit_messages (
     source_ip     VARCHAR(45)     NOT NULL                COMMENT 'IP ayant appelé le webhook',
     payload       JSON            NOT NULL                COMMENT 'Corps brut du webhook (sans Text, HTML ni Headers)',
     completed_at  DATETIME(6)     NULL                    COMMENT 'Toutes les pièces annoncées sont enregistrées (UTC). NULL = mail incomplet',
+    truncated     TINYINT(1)      NOT NULL DEFAULT 0      COMMENT '1 = corps (et en-têtes) raccourcis par le relais : mail trop volumineux pour max_body_size',
     PRIMARY KEY (id),
     UNIQUE KEY uq_mailpit_id (mailpit_id),
     KEY idx_created_at (created_at),

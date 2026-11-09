@@ -224,6 +224,81 @@ final class WorkerTest extends TestCase
         self::assertSame(['relayed'], $this->state->read()['mailpit']['messages']['m1']['Tags']);
     }
 
+    public function testTooLargeMessageIsSentTruncated(): void
+    {
+        // HTML et texte en caractères de plusieurs octets : une coupe au mauvais endroit casserait l'UTF-8.
+        $this->addMessage('m1', summary: [
+            '_message' => self::bodies(str_repeat('<p>Été ☀️ 🌍</p>', 4000), str_repeat("Ligne d'été 🌍\n", 200)),
+        ]);
+        $this->setApi('max_body_size', 20_000);
+
+        $run = $this->runWorker();
+
+        $sizes = $this->messageRequestSizes();
+        self::assertCount(2, $sizes, 'la version complète, puis une version tronquée');
+        self::assertGreaterThan(20_000, $sizes[0]);
+        self::assertLessThanOrEqual(20_000 - 1024, $sizes[1]);
+        self::assertStringContainsString(sprintf(
+            'mail m1 trop volumineux pour l\'API (%d octets, limite 20000 octets) : envoi d\'une version tronquée de %d octets (essai 1/3)',
+            $sizes[0],
+            $sizes[1],
+        ), $run['log']);
+
+        $sent = $this->state->read()['api']['messages']['m1'];
+        self::assertTrue($sent['Truncated']);
+        self::assertTrue(mb_check_encoding($sent['HTML'], 'UTF-8'));
+        self::assertTrue(mb_check_encoding($sent['Text'], 'UTF-8'));
+        self::assertStringStartsWith('<p>Été ☀️ 🌍</p>', $sent['HTML']);
+        self::assertStringEndsWith('<p style="margin-top:2em;color:#666;font-style:italic">[… contenu tronqué par le relais : mail trop volumineux pour l&apos;API]</p>', $sent['HTML']);
+        // Le HTML a suffi : le texte est complet, avec la note à la fin.
+        self::assertSame(rtrim(str_repeat("Ligne d'été 🌍\n", 200)) . "\n\n[… contenu tronqué par le relais : mail trop volumineux pour l'API]", $sent['Text']);
+        self::assertSame(['Subject' => ['Sujet m1'], 'Received' => ['from a', 'from b']], $sent['Headers']);
+
+        self::assertSame(['relayed'], $this->state->read()['mailpit']['messages']['m1']['Tags']);
+        self::assertStringContainsString('mail m1 enregistré par l\'API', $run['log']);
+    }
+
+    public function testTooLargeMessageWithoutAnnouncedLimitIsHalved(): void
+    {
+        // Un 413 sans « max_body_size » (proxy, ancienne API) : la moitié de l'envoi précédent.
+        $this->addMessage('m1', summary: ['_message' => self::bodies(str_repeat('<b>x</b>', 3000), str_repeat('texte ', 4000))]);
+        $this->setApi('max_body_size', 12_000);
+        $this->setApi('hide_max_body_size', true);
+
+        $run = $this->runWorker();
+
+        $sizes = $this->messageRequestSizes();
+        self::assertCount(3, $sizes);
+        self::assertLessThanOrEqual(intdiv($sizes[0], 2) - 1024, $sizes[1]);
+        self::assertGreaterThan(12_000, $sizes[1]);
+        self::assertLessThanOrEqual(intdiv($sizes[1], 2) - 1024, $sizes[2]);
+        self::assertStringContainsString('limite non indiquée', $run['log']);
+        self::assertStringContainsString('(essai 2/3)', $run['log']);
+
+        $sent = $this->state->read()['api']['messages']['m1'];
+        self::assertTrue($sent['Truncated']);
+        // Le HTML entier n'a pas suffi : il ne reste que la note, et le texte est coupé à son tour.
+        self::assertStringStartsWith("\n<p style=", $sent['HTML']);
+        self::assertStringStartsWith('texte texte', $sent['Text']);
+        self::assertStringEndsWith("\n\n[… contenu tronqué par le relais : mail trop volumineux pour l'API]", $sent['Text']);
+        self::assertSame(['relayed'], $this->state->read()['mailpit']['messages']['m1']['Tags']);
+    }
+
+    public function testMessageStillTooLargeAfterThreeTruncatedAttemptsIsRefused(): void
+    {
+        $this->addMessage('m1', summary: ['_message' => self::bodies(str_repeat('<p>HTML</p>', 2000), str_repeat('texte ', 2000))]);
+        $this->setApi('message_status', 413);
+
+        $run = $this->runWorker(2);
+
+        // La version complète, puis trois versions tronquées, puis le refus définitif (pas d'autre essai).
+        self::assertSame(4, $this->countRequests('api POST /v1/messages'));
+        self::assertStringContainsString('(essai 3/3)', $run['log']);
+        self::assertStringContainsString('mail m1 refusé par l\'API (API (message tronqué) refus définitif : HTTP 413', $run['log']);
+        self::assertSame(['relay-failed'], $this->state->read()['mailpit']['messages']['m1']['Tags']);
+        self::assertArrayNotHasKey('m1', $this->state->read()['api']['messages']);
+    }
+
     public function testBatchesAreProcessedOldestFirst(): void
     {
         $this->addMessage('ancien');
@@ -388,6 +463,39 @@ final class WorkerTest extends TestCase
         $this->state->update(static function (array &$state) use ($id, $message): void {
             $state['mailpit']['messages'][$id] = $message;
         });
+    }
+
+    /**
+     * Mail complet tel que le renvoie Mailpit (champ « _message » du faux Mailpit), avec ce HTML et ce texte.
+     *
+     * @return array<string, mixed>
+     */
+    private static function bodies(string $html, string $text): array
+    {
+        return [
+            'ReturnPath'  => 'bounce@example.com',
+            'Date'        => '2026-11-08T21:15:01+01:00',
+            'Text'        => $text,
+            'HTML'        => $html,
+            'Inline'      => [],
+            'Attachments' => [],
+        ];
+    }
+
+    /**
+     * Taille (octets) de chaque POST /v1/messages reçu par la fausse API, dans l'ordre.
+     *
+     * @return list<int>
+     */
+    private function messageRequestSizes(): array
+    {
+        return array_values(array_map(
+            static fn (array $request): int => $request['size'],
+            array_filter(
+                $this->state->read()['requests'] ?? [],
+                static fn (array $request): bool => $request['server'] === 'api' && $request['method'] === 'POST' && $request['path'] === '/v1/messages',
+            ),
+        ));
     }
 
     private function setApi(string $key, mixed $value): void

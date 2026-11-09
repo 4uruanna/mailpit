@@ -121,6 +121,7 @@ $detailQuery = $filter->query();
                     <a class="subject" href="<?= $e($link) ?>"><?= $e($message['subject'] !== '' ? $message['subject'] : '(sans sujet)') ?></a>
                     <?php if ($message['snippet'] !== ''): ?><div class="snippet"><?= $e($message['snippet']) ?></div><?php endif; ?>
                     <?php if (!$message['complete']): ?><span class="tag">incomplet</span><?php endif; ?>
+                    <?php if ($message['truncated']): ?><span class="tag warn" title="Trop volumineux pour l'API : texte, HTML ou en-têtes raccourcis par le relais">tronqué</span><?php endif; ?>
                 </td>
                 <td class="nowrap"><?= $message['attachments'] > 0 ? $e($message['attachments']) : '' ?></td>
             </tr>

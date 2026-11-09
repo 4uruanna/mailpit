@@ -538,6 +538,7 @@ Notez ici chaque écart constaté et sa correction, au fil des essais.
 | 2026-11-09 | 3.2 – 3.4 | Après les règles DNS : `mailpit` résolu (`10.89.25.2`), connexion au port 8025 OK, le mail `Phase 0` est enregistré par l'API au 1er essai. L'API n'autorisant que l'IPv4, le relais sort donc bien en IPv4 (étape 3.4 validée du même coup) | — |
 | 2026-11-09 | 3.3 – 3.5 | `/health` → `{"status":"ok"}`, `dns_enabled: true`, aucun port publié | — |
 | 2026-11-09 | 4.1 | 1er envoi : aucun mail, car l'adresse d'exemple était restée dans la commande (`>/dev/null` masquait le refus). 2e envoi : tag `relayed`, mail resté non lu | Variable `TO` exportée en début de phase 4, utilisée par toutes les commandes des phases 4 et 5 |
+| 2026-11-09 | 4.2 | `complete: true`. Image intégrée (`inline`, `point.png`) et pièce jointe (`attachment`, `note.txt`) toutes deux `stored` | — |
 
 ---
 

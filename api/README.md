@@ -27,7 +27,7 @@ Trois sortes d'accès :
 
 Le mail complet est envoyé par le [relais](../relay/README.md), installé sur le serveur Mailpit ([Partie 7 du tutoriel](../docs/mailpit/07-relay.md)) : en-têtes, texte, HTML, pièces jointes et images intégrées. Le relais ne garde rien de son côté : il ne considère un mail comme livré que lorsque l'API répond `"complete": true`.
 
-> ℹ️ L'API accepte aussi le webhook **direct** de Mailpit (sans relais), qui n'envoie qu'un **résumé** : expéditeur, destinataires, sujet, date, taille, nombre de pièces jointes, tags et les 250 premiers caractères du texte (`Snippet`). Voir l'[étape 5](#5-configurer-mailpit).
+> ⚠️ Le relais est le **seul** moyen d'alimenter l'API. Le webhook **direct** de Mailpit (sans relais) est refusé (`401`) : Mailpit ne sait pas ajouter d'en-tête, et l'API n'accepte le jeton que dans l'en-tête `Authorization`, jamais dans l'URL, où il apparaîtrait dans les logs d'accès de l'hébergement. Voir l'[étape 5](#5-configurer-mailpit).
 
 ## Arborescence
 
@@ -58,7 +58,7 @@ api/
 
 ### Relais
 
-Elles exigent le jeton du relais : en-tête `Authorization: Bearer <jeton>` (relais), ou `?token=<jeton>` dans l'URL (webhook direct de Mailpit, qui ne sait pas ajouter d'en-tête). Et l'appel doit venir d'une IP de `webhook.allowed_ips`.
+Elles exigent le jeton du relais, dans l'en-tête `Authorization: Bearer <jeton>` **uniquement**. Un `?token=<jeton>` dans l'URL est ignoré : sans en-tête valide, la réponse est `401`, et un avertissement est écrit dans `var/log/api.log` (sans la valeur du jeton). Et l'appel doit venir d'une IP de `webhook.allowed_ips`.
 
 | Méthode | URL | Réponse |
 |---|---|---|
@@ -210,35 +210,15 @@ Espace client OVH → **Hébergements** → onglet **Multisite** → **Ajouter u
 
 - **Dossier racine** : `api/public` (recommandé : seul `public/` est alors visible depuis le web).
   `api` fonctionne aussi : le `.htaccess` racine redirige vers `public/` et bloque le reste.
-- Cochez **SSL** et attendez que le certificat soit généré. Mailpit appellera l'API en HTTPS.
+- Cochez **SSL** et attendez que le certificat soit généré. Le relais appellera l'API en HTTPS.
 
 **Version de PHP** : le fichier `.ovhconfig` demande PHP 8.5. OVH le lit à la racine de l'hébergement ou à la racine du dossier du multisite. Si vous choisissez `api/public` comme dossier racine, **déplacez `.ovhconfig` dans `public/`**. Si OVH ne propose pas encore la 8.5, mettez `8.4` (le minimum de l'API). Vérifiez la version active dans l'onglet **Informations générales** de l'hébergement.
 
 ### 5. Configurer Mailpit
 
-**Avec le relais** (mail complet, pièces jointes comprises : recommandé) : suivez la [Partie 7 du tuto](../docs/mailpit/07-relay.md). `https://api.amnesic.dev` va dans `RELAY_API_URL`, le jeton dans `RELAY_API_TOKEN`, et Mailpit appelle le relais.
+Installez le relais sur le serveur Mailpit : suivez la [Partie 7 du tuto](../docs/mailpit/07-relay.md). `https://api.amnesic.dev` va dans `RELAY_API_URL`, le jeton dans `RELAY_API_TOKEN`, et Mailpit appelle le relais. Le relais envoie le mail complet (pièces jointes comprises) et réessaie tant que l'API ne l'a pas entièrement enregistré.
 
-**Sans relais** (résumé seulement, aucun nouvel essai si l'API est injoignable) : le détail est dans la [Partie 6 du tuto](../docs/mailpit/06-webhook.md). En résumé, sur le serveur Debian, ajoutez à `/etc/mailpit/mailpit.env` :
-
-```ini
-# Webhook appelé à chaque nouveau mail (Mailpit ne sait pas envoyer d'en-tête : jeton dans l'URL)
-MP_WEBHOOK_URL=https://api.amnesic.dev/v1/messages?token=LE_JETON_DE_CONFIG_PHP
-
-# 0 = pas de limite. Par défaut Mailpit n'envoie qu'UN webhook par seconde
-# et IGNORE les mails reçus entre-temps : ils n'arriveraient jamais dans l'API.
-MP_WEBHOOK_LIMIT=0
-
-# Facultatif : nom envoyé dans l'en-tête Mailpit-Label (colonne mailpit_label)
-# MP_LABEL=mailpit-prod
-```
-
-Puis :
-
-```bash
-sudo systemctl restart mailpit
-```
-
-> ℹ️ Mailpit n'essaie **qu'une seule fois** (délai d'attente de 5 secondes). Si l'API est injoignable à ce moment-là, le mail reste dans Mailpit mais n'arrive pas en base. Les échecs apparaissent dans `sudo journalctl -u mailpit | grep webhook`.
+> ⚠️ Mailpit ne doit **pas** appeler l'API directement : il ne sait pas ajouter d'en-tête, et l'API refuse un jeton passé dans l'URL (`401`). Une ancienne configuration avec `MP_WEBHOOK_URL=https://api.amnesic.dev/v1/messages?token=…` dans `/etc/mailpit/mailpit.env` ne fonctionne donc plus : remplacez-la par l'URL du relais ([Partie 7, étape 7](../docs/mailpit/07-relay.md#étape-7--envoyer-le-webhook-de-mailpit-au-relais)), puis **changez le jeton** (voir [Changer le jeton](#dépannage)) : il figure dans les logs d'accès de l'hébergement.
 
 ---
 
@@ -303,9 +283,9 @@ Les tests **PHPUnit** vérifient le code sur votre ordinateur, sans rien déploy
 
 | Suite | Dossier | Ce qui est testé | Base MySQL |
 |---|---|---|---|
-| `unit` | `tests/Unit/` | classes sans base : filtre IP (`IpMatcher`, `ClientIpResolver`), adresses, validation du JSON des mails et des pièces (chaque erreur `422`), configuration (`Settings`), filtres du Dashboard, jetons (`ApiScope`, `Authorization: Bearer`), adresse comptée par la limite de connexion (`LoginThrottle::ipKey`) | non |
+| `unit` | `tests/Unit/` | classes sans base : filtre IP (`IpMatcher`, `ClientIpResolver`), adresses, validation du JSON des mails et des pièces (chaque erreur `422`), configuration (`Settings`), filtres du Dashboard, jetons (`ApiScope`, `Authorization: Bearer`, jeton du relais refusé dans l'URL et avertissement sans sa valeur), adresse comptée par la limite de connexion (`LoginThrottle::ipKey`) | non |
 | `integration` | `tests/Integration/` | accès à la base : mails, pièces, purge, liste par adresse, suppression, jetons développeurs, limite de connexion au Dashboard (par identifiant et adresse, plafond par adresse, IPv6 par `/64`) | oui |
-| `http` | `tests/Http/` | l'application complète (`Kernel::create`) avec de fausses requêtes : routes du relais (`403`, `401`, `415`, `400`, `413`, `422`, `201`, `200`), envoi des pièces jusqu'à `"complete": true`, routes des développeurs, Dashboard (redirection vers la connexion, refus sans jeton anti-CSRF, messages de blocage) | oui |
+| `http` | `tests/Http/` | l'application complète (`Kernel::create`) avec de fausses requêtes : routes du relais (`403`, `401`, `401` avec `?token=…`, `415`, `400`, `413`, `422`, `201`, `200`), envoi des pièces jusqu'à `"complete": true`, routes des développeurs, Dashboard (redirection vers la connexion, refus sans jeton anti-CSRF, messages de blocage) | oui |
 
 **Prérequis** : PHP 8.4 minimum avec `pdo_mysql` et `mbstring`, Composer, et une base MySQL **de test** (8.4 comme l'hébergement ; 8.0.19 minimum).
 
@@ -357,18 +337,19 @@ Les pièces jointes des tests sont écrites dans un dossier temporaire, supprim�
 | Symptôme | Cause probable / solution |
 |---|---|
 | `403` depuis le serveur Mailpit | L'IP vue par l'API n'est pas dans `allowed_ips`. Elle est écrite dans `var/log/api.log` (`[ip-filter] requête refusée depuis « … »`) : ajoutez-la. C'est souvent l'IPv6 : un `curl` lancé sans `-4` |
-| `401` | Jeton absent ou différent de `webhook.token` (`[auth] jeton absent` ou `[auth] jeton invalide` dans `var/log/api.log`). Vérifiez `RELAY_API_TOKEN` (relais) ou `MP_WEBHOOK_URL` (webhook direct) |
+| `401` | Jeton absent ou différent de `webhook.token` (`[auth] jeton absent` ou `[auth] jeton invalide` dans `var/log/api.log`). Vérifiez `RELAY_API_TOKEN` (relais) |
+| `401` avec `[auth] jeton dans l'URL (?token=…), ignoré` dans le log | Le jeton a été passé dans l'URL : il n'est accepté que dans l'en-tête `Authorization`. Souvent une ancienne configuration de Mailpit (`MP_WEBHOOK_URL=…/v1/messages?token=…`) : envoyez le webhook au relais ([étape 5](#5-configurer-mailpit)). Si le log dit `jeton du relais dans l'URL`, c'était le vrai jeton : changez-le |
 | `401` avec `jeton absent` alors que le relais envoie bien le jeton | L'en-tête `Authorization` n'arrive pas jusqu'à PHP : vérifiez que les `.htaccess` (racine et `public/`) ont bien été envoyés, à jour |
 | `500` avec `{"error":"Erreur de configuration du serveur"}` | `vendor/` ou `config.php` absent, ou `config.php` invalide (détail dans `var/log/api.log`). Souvent : `webhook.token` vide ou trop court (**obligatoire**, 32 caractères minimum) |
 | `500` avec `Slim Application Error` | Souvent la base : identifiants faux ou table absente. Détail dans `var/log/api.log` |
 | `404` sur `/v1/messages` | `.htaccess` non envoyés (fichiers cachés), ou mauvais dossier racine du multisite. Si l'API est dans un sous-dossier de l'URL, renseignez `base_path` |
-| Certains mails manquent en base | `MP_WEBHOOK_LIMIT` n'est pas à `0` (voir l'étape 5) |
+| Certains mails manquent en base | Le relais ne les a pas encore livrés (API en panne, jeton ou IP refusés : il réessaie), ou les a refusés définitivement (tag `relay-failed` dans Mailpit). Voir ses logs : `sudo journalctl -u mailpit-relay -n 50` |
 | `413` sur `POST /v1/messages` | Le JSON du mail (texte + HTML + en-têtes) dépasse `webhook.max_body_size` (16 Mo par défaut) : augmentez-le |
 | `413` sur `POST /v1/messages/…/part/…` | La pièce dépasse la limite, alors que sa taille annoncée était plus petite : cas anormal, voir les logs du relais |
 | Log PHP `POST Content-Length of … exceeds the limit` | Un mail au texte ou HTML très lourd, ou une pièce jointe, dépasse `post_max_size` de l'hébergement. Le JSON est quand même lu et enregistré : l'avertissement est sans effet tant que `display_errors` est désactivé (`environment=production` dans `.ovhconfig`) |
 | Pièce jointe en `too_large` | Elle dépasse `webhook.max_attachment_size` (5 Mo par défaut). Seule sa description est enregistrée |
 | Des mails anciens ont disparu | Normal : seuls les `webhook.max_messages` derniers (1000 par défaut) sont gardés. Les échecs de purge sont écrits dans `var/log/api.log` (`[prune] …`) |
-| `text_body` toujours vide | Le webhook ne passe pas par le relais (`MP_WEBHOOK_URL` pointe directement sur l'API), ou `sql/schema.sql` n'a pas été importé (erreur `Table … doesn't exist` dans le log) |
+| `text_body` vide | Mail reçu par l'ancien webhook direct de Mailpit (résumé seulement), avant le passage au relais, ou `sql/schema.sql` n'a pas été importé (erreur `Table … doesn't exist` dans le log) |
 | Mail avec `completed_at` vide | Des pièces sont encore attendues (`status = 'pending'` dans `mailpit_parts`). Le relais les renvoie tout seul : voir ses logs |
 | Page blanche / erreur PHP | Version de PHP trop ancienne : vérifiez `.ovhconfig` (8.4 minimum) |
 | Dashboard : « Trop de tentatives pour cet identifiant depuis votre adresse » | 3 échecs en moins de 30 minutes pour cet identifiant depuis votre adresse : attendez la fin du délai affiché, ou connectez-vous depuis une autre adresse. Pour débloquer tout de suite : `DELETE FROM mailpit_login_attempts WHERE username = 'identifiant';` dans phpMyAdmin. Les échecs sont dans `var/log/api.log` (`[signin] …`) |
@@ -383,7 +364,7 @@ Les pièces jointes des tests sont écrites dans un dossier temporaire, supprim�
 
 Le fichier `var/log/api.log` n'est pas vidé automatiquement : supprimez-le de temps en temps par FTP.
 
-> ℹ️ Avec le relais, le jeton voyage dans un en-tête : il n'apparaît pas dans les logs d'accès de l'hébergement. Avec le webhook direct (`?token=…`), il fait partie de l'URL et apparaît dans ces logs (visibles uniquement depuis votre espace client OVH) : changez-le si vous les partagez.
+> ℹ️ Le jeton voyage uniquement dans un en-tête : il n'apparaît pas dans les logs d'accès de l'hébergement. Un jeton passé dans l'URL (`?token=…`) est refusé, mais il figure quand même dans ces logs (visibles depuis votre espace client OVH). Si `var/log/api.log` signale `[auth] jeton du relais dans l'URL`, changez le jeton.
 
 **Changer le jeton** : générez-en un nouveau (`openssl rand -hex 32`), mettez-le dans `config.php` (envoi FTP) **et** dans `RELAY_API_TOKEN` (`/etc/mailpit/relay.env`, puis `sudo systemctl restart mailpit-relay`). Entre les deux, le relais reçoit des `401` et réessaie : aucun mail n'est perdu.
 
@@ -509,7 +490,7 @@ curl -s 'https://api.amnesic.dev/v1/messages?limit=25&page=2' -H 'Authorization:
 | `total` | nombre de mails correspondants (toutes pages confondues) · `count` : nombre de mails dans cette réponse |
 | `id` | ID du mail dans Mailpit : c'est lui qu'attend `DELETE /v1/messages/{id}` |
 | `date` | en-tête `Date` du mail · `created_at` : réception par Mailpit · `received_at` : réception par l'API (UTC, ISO 8601) |
-| `text`, `html` | corps du mail, ou `null` s'il n'a pas été envoyé par le relais (webhook direct de Mailpit) |
+| `text`, `html` | corps du mail, ou `null` pour un mail reçu par l'ancien webhook direct de Mailpit (résumé seulement) |
 | `complete` | `true` quand toutes les pièces attendues sont enregistrées |
 | `parts[].status` | `stored` (enregistrée), `pending` (pas encore reçue) ou `too_large` (au-delà de la limite, non enregistrée). Le contenu des pièces n'est pas téléchargeable par l'API |
 | `label`, `username` | en-tête `Mailpit-Label` (`RELAY_LABEL`) et utilisateur SMTP authentifié, ou `null` |

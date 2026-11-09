@@ -52,14 +52,30 @@ final class RelayRoutesTest extends AppTestCase
         self::assertSame(0, (int) $this->scalar('SELECT COUNT(*) FROM mailpit_messages'));
     }
 
-    public function testTokenInQueryStringForTheDirectWebhook(): void
+    public function testTokenInQueryStringIsRejected(): void
     {
-        $response = $this->request(
-            'POST',
-            '/v1/messages?token=' . self::RELAY_TOKEN,
-            ['Content-Type' => 'application/json', 'Mailpit-Label' => 'mailpit-prod'],
-            json_encode(array_diff_key(self::payload('m1'), ['Text' => 0, 'HTML' => 0, 'Headers' => 0]), JSON_THROW_ON_ERROR),
-        );
+        // Ce que ferait le webhook direct de Mailpit, qui ne sait pas ajouter d'en-tête.
+        $summary = json_encode(array_diff_key(self::payload('m1'), ['Text' => 0, 'HTML' => 0, 'Headers' => 0]), JSON_THROW_ON_ERROR);
+        $response = $this->request('POST', '/v1/messages?token=' . self::RELAY_TOKEN, ['Content-Type' => 'application/json'], $summary);
+
+        self::assertSame(401, $response->getStatusCode());
+        self::assertSame(['error' => 'Unauthorized'], self::json($response));
+        self::assertSame(0, (int) $this->scalar('SELECT COUNT(*) FROM mailpit_messages'));
+
+        $response = $this->request('POST', '/v1/messages/m1/part/2?token=' . self::RELAY_TOKEN, [
+            'Content-Type'     => 'application/octet-stream',
+            'X-Content-SHA256' => hash('sha256', 'hello'),
+        ], 'hello');
+        self::assertSame(401, $response->getStatusCode());
+    }
+
+    public function testTokenInQueryStringIsIgnoredWithAValidHeader(): void
+    {
+        $response = $this->request('POST', '/v1/messages?token=autre-chose', [
+            'Authorization' => 'Bearer ' . self::RELAY_TOKEN,
+            'Content-Type'  => 'application/json',
+            'Mailpit-Label' => 'mailpit-prod',
+        ], json_encode(self::payload('m1'), JSON_THROW_ON_ERROR));
 
         self::assertSame(201, $response->getStatusCode());
         self::assertSame('mailpit-prod', $this->scalar('SELECT mailpit_label FROM mailpit_messages'));

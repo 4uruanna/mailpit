@@ -52,18 +52,57 @@ final class TokenAuthMiddlewareTest extends TestCase
     /** @return iterable<string, array{array<string, string>, string, int}> */
     public static function processCases(): iterable
     {
-        yield 'bon jeton dans l\'en-tête' => [['Authorization' => 'Bearer ' . self::TOKEN], '', 200];
-        yield 'bon jeton dans l\'URL'     => [[], '?token=' . self::TOKEN, 200];
+        $bearer = ['Authorization' => 'Bearer ' . self::TOKEN];
+
+        yield 'bon jeton dans l\'en-tête' => [$bearer, '', 200];
         yield 'mauvais jeton'            => [['Authorization' => 'Bearer ' . self::TOKEN . 'x'], '', 401];
+        yield 'absent'                   => [[], '', 401];
+        // Le jeton n'est jamais accepté dans l'URL, même le bon.
+        yield 'bon jeton dans l\'URL'     => [[], '?token=' . self::TOKEN, 401];
         yield 'mauvais jeton dans l\'URL' => [[], '?token=faux', 401];
         yield 'jeton vide dans l\'URL'    => [[], '?token=', 401];
         yield 'jeton en tableau dans l\'URL' => [[], '?token[]=' . self::TOKEN, 401];
-        yield 'absent'                   => [[], '', 401];
+        // Avec un en-tête valide, le ?token=… est ignoré, quel qu'il soit.
+        yield 'en-tête + faux jeton dans l\'URL' => [$bearer, '?token=faux', 200];
+        yield 'en-tête + bon jeton dans l\'URL'  => [$bearer, '?token=' . self::TOKEN, 200];
+        yield 'mauvais en-tête + bon jeton dans l\'URL' => [['Authorization' => 'Bearer faux'], '?token=' . self::TOKEN, 401];
     }
 
     /** @param array<string, string> $headers */
     #[DataProvider('processCases')]
     public function testProcess(array $headers, string $query, int $expected): void
+    {
+        $response = $this->process($headers, $query);
+
+        self::assertSame($expected, $response->getStatusCode());
+        if ($expected === 401) {
+            self::assertSame('Bearer', $response->getHeaderLine('WWW-Authenticate'));
+            self::assertSame('{"error":"Unauthorized"}', (string) $response->getBody());
+        }
+    }
+
+    public function testTokenInQueryStringIsLoggedWithoutItsValue(): void
+    {
+        // Le bon jeton dans l'URL : avertissement, avec le conseil de le changer.
+        $log = $this->logOf(fn () => $this->process([], '?token=' . self::TOKEN));
+        self::assertStringContainsString('[auth] jeton du relais dans l\'URL (?token=…), ignoré', $log);
+        self::assertStringContainsString('POST /v1/messages', $log);
+        self::assertStringContainsString('changez-le', $log);
+        self::assertStringContainsString('[auth] jeton absent', $log);
+        self::assertStringNotContainsString(self::TOKEN, $log);
+
+        // Un autre ?token=… : avertissement aussi, même si l'en-tête est valide.
+        $log = $this->logOf(fn () => $this->process(['Authorization' => 'Bearer ' . self::TOKEN], '?token=valeur-secrete'));
+        self::assertStringContainsString('[auth] jeton dans l\'URL (?token=…), ignoré', $log);
+        self::assertStringNotContainsString('changez-le', $log);
+        self::assertStringNotContainsString('valeur-secrete', $log);
+
+        // Sans ?token=… : aucun avertissement.
+        self::assertSame('', $this->logOf(fn () => $this->process(['Authorization' => 'Bearer ' . self::TOKEN], '?autre=1')));
+    }
+
+    /** @param array<string, string> $headers */
+    private function process(array $headers, string $query): ResponseInterface
     {
         $request = new ServerRequestFactory()->createServerRequest('POST', 'https://api.test/v1/messages' . $query);
         parse_str(ltrim($query, '?'), $params);
@@ -84,12 +123,21 @@ final class TokenAuthMiddlewareTest extends TestCase
             }
         };
 
-        $response = new TokenAuthMiddleware(self::TOKEN, $factory)->process($request, $handler);
+        return new TokenAuthMiddleware(self::TOKEN, $factory)->process($request, $handler);
+    }
 
-        self::assertSame($expected, $response->getStatusCode());
-        if ($expected === 401) {
-            self::assertSame('Bearer', $response->getHeaderLine('WWW-Authenticate'));
-            self::assertSame('{"error":"Unauthorized"}', (string) $response->getBody());
+    /** Ce que $run écrit dans le log (error_log). */
+    private function logOf(callable $run): string
+    {
+        $file = (string) tempnam(sys_get_temp_dir(), 'mailpit-auth-log-');
+        $previous = ini_set('error_log', $file);
+        try {
+            $run();
+
+            return (string) file_get_contents($file);
+        } finally {
+            ini_set('error_log', (string) $previous);
+            unlink($file);
         }
     }
 }

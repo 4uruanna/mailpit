@@ -11,7 +11,8 @@ use Exception;
 /**
  * Message reçu sur POST /v1/messages.
  *
- * Envoyé directement par le webhook de Mailpit, c'est un simple résumé (MessageSummary). Exemple :
+ * Le minimum accepté est le résumé de Mailpit (MessageSummary), ce qu'envoyait son webhook direct,
+ * qui n'est plus accepté (le jeton n'est lu que dans l'en-tête Authorization). Exemple :
  * {
  *   "ID": "VnV7f5bZqzoCs2LCh3yGNN", "MessageID": "abc@example.com", "Read": false,
  *   "From": {"Name": "Alice", "Address": "alice@example.com"},

@@ -14,10 +14,11 @@ use Psr\Http\Server\RequestHandlerInterface;
 /**
  * Vérifie le jeton partagé avec le relais (webhook.token dans config.php, RELAY_API_TOKEN côté relais).
  *
- * Le relais l'envoie dans l'en-tête « Authorization: Bearer <jeton> ».
- * Le webhook direct de Mailpit ne sait pas ajouter d'en-tête : pour lui, le jeton
- * peut aussi être passé dans l'URL (?token=…), au prix de le voir apparaître dans
- * les logs d'accès de l'hébergement.
+ * Le relais l'envoie dans l'en-tête « Authorization: Bearer <jeton> ». C'est le SEUL endroit
+ * accepté : un jeton dans l'URL (?token=…) apparaîtrait dans les logs d'accès de l'hébergement.
+ * Un ?token=… est donc ignoré (401 s'il n'y a pas d'en-tête valide), avec un avertissement
+ * dans le log, qui ne contient jamais sa valeur. Le webhook direct de Mailpit, qui ne sait pas
+ * ajouter d'en-tête, ne peut donc pas alimenter l'API : il faut passer par le relais.
  *
  * Réponse 401 si le jeton est absent ou faux. Le contrôle a lieu avant toute lecture du corps.
  */
@@ -31,9 +32,10 @@ final readonly class TokenAuthMiddleware implements MiddlewareInterface
 
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
-        $given = self::bearer($request) ?? $request->getQueryParams()['token'] ?? null;
+        $this->warnAboutQueryToken($request);
+        $given = self::bearer($request);
 
-        if (!is_string($given) || $given === '' || !hash_equals($this->token, $given)) {
+        if ($given === null || !hash_equals($this->token, $given)) {
             error_log(sprintf(
                 '[auth] jeton %s : %s %s',
                 $given === null ? 'absent' : 'invalide',
@@ -46,6 +48,27 @@ final readonly class TokenAuthMiddleware implements MiddlewareInterface
         }
 
         return $handler->handle($request);
+    }
+
+    /**
+     * Avertit, sans jamais écrire sa valeur, qu'un jeton a été passé dans l'URL : il est ignoré.
+     * S'il s'agit du vrai jeton, il figure désormais dans les logs d'accès : il faut le changer.
+     */
+    private function warnAboutQueryToken(ServerRequestInterface $request): void
+    {
+        $params = $request->getQueryParams();
+        if (!array_key_exists('token', $params)) {
+            return;
+        }
+
+        $leaked = is_string($params['token']) && hash_equals($this->token, $params['token']);
+        error_log(sprintf(
+            '[auth] %s dans l\'URL (?token=…), ignoré : seul l\'en-tête « Authorization: Bearer … » est accepté : %s %s%s',
+            $leaked ? 'jeton du relais' : 'jeton',
+            $request->getMethod(),
+            $request->getUri()->getPath(),
+            $leaked ? '. Il figure maintenant dans les logs d\'accès de l\'hébergement : changez-le' : '',
+        ));
     }
 
     /** Jeton de l'en-tête « Authorization: Bearer … », ou null. */

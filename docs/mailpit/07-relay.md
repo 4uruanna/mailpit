@@ -2,7 +2,7 @@
 
 > Remplacez les valeurs d'exemple (`mondomaine.fr`, `admin:MotDePasseSolide`…) comme indiqué dans [Avant de commencer](../mailpit.md#avant-de-commencer). `api.mondomaine.fr` désigne ici l'API du dossier [`api/`](../../api/README.md), déployée sur un hébergement web.
 
-Le webhook de la [Partie 6](06-webhook.md) n'envoie qu'un **résumé** du mail. Le contenu complet n'est lisible que par l'API de Mailpit, qui n'écoute que sur le serveur (`127.0.0.1:8025`). Une API hébergée ailleurs ne peut donc pas le récupérer.
+Le webhook de la [Partie 6](06-webhook.md) n'envoie qu'un **résumé** du mail. Le contenu complet n'est lisible que par l'API de Mailpit, qui n'écoute que sur le serveur (`127.0.0.1:8025`). Une API hébergée ailleurs ne peut donc pas le récupérer. De plus, Mailpit ne sait pas ajouter d'en-tête : l'API du dossier `api/`, qui n'accepte son jeton que dans l'en-tête `Authorization`, refuse son webhook direct.
 
 Le **relais** (dossier [`relay/`](../../relay/README.md) du dépôt) comble ce manque. C'est un petit service PHP qui tourne dans Podman, à côté de Mailpit :
 
@@ -27,7 +27,7 @@ Ce que le relais apporte :
 - **Un mail à la fois.** Le relais termine un mail (message, pièces jointes une par une, tag) avant de passer au suivant : il n'envoie jamais deux requêtes en même temps à l'API.
 - **Les plus anciens d'abord.** Après une panne de l'API, le relais rattrape son retard du plus ancien au plus récent : ce sont les plus anciens que Mailpit supprime en premier. Un mail qui attend son nouvel essai ne bloque pas les suivants.
 - **Les 1000 derniers mails, des deux côtés.** Mailpit (`MP_MAX_MESSAGES=1000`, [Partie 1](01-podman.md#étape-3--créer-le-fichier-de-configuration-de-mailpit)) et l'API (`webhook.max_messages`) suppriment les plus anciens au-delà de 1000.
-- **Un jeton des deux côtés.** Le relais s'authentifie auprès de l'API avec un jeton configuré dans `relay.env` **et** dans le `config.php` de l'API, envoyé dans un en-tête (jamais dans l'URL).
+- **Un jeton des deux côtés.** Le relais s'authentifie auprès de l'API avec un jeton configuré dans `relay.env` **et** dans le `config.php` de l'API, envoyé dans un en-tête (jamais dans l'URL : l'API refuse un `?token=…`, qui finirait dans les logs d'accès de l'hébergement).
 - **Rien n'est exposé.** L'interface de Mailpit reste sur `127.0.0.1`, et le relais n'ouvre aucun port sur le serveur.
 
 **Prérequis :**
@@ -219,6 +219,8 @@ MP_WEBHOOK_LIMIT=0
 ```
 
 Avec `MP_WEBHOOK_LIMIT=0`, chaque mail réveille le relais aussitôt. Un webhook manqué n'est pas grave : le relais cherche de toute façon les nouveaux mails toutes les 30 secondes (`RELAY_POLL_INTERVAL`).
+
+> ⚠️ `MP_WEBHOOK_URL` pointait directement sur l'API (`https://api.mondomaine.fr/v1/messages?token=…`) ? L'API refuse désormais ce jeton dans l'URL (`401`) : remplacez la ligne comme ci-dessus, puis changez le jeton (voir « Changer le jeton » plus bas), car il figure dans les logs d'accès de l'hébergement.
 
 ## Étape 8 — Démarrer
 

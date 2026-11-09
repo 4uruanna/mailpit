@@ -34,7 +34,7 @@ final readonly class MessageRepository
         ) AS new
         ON DUPLICATE KEY UPDATE
             -- Le contenu d'un mail ne change pas dans Mailpit : on ne fait que compléter
-            -- ce qui manquait (ex. résumé reçu d'abord directement de Mailpit, puis mail complet).
+            -- ce qui manquait (ex. résumé reçu par l'ancien webhook direct de Mailpit, puis mail complet).
             text_body    = COALESCE(new.text_body, mailpit_messages.text_body),
             html_body    = COALESCE(new.html_body, mailpit_messages.html_body),
             headers      = COALESCE(new.headers, mailpit_messages.headers),

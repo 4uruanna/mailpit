@@ -8,3 +8,6 @@
 !/var/log/.gitkeep
 /var/messages/*
 !/var/messages/.gitkeep
+
+# Cache de PHPUnit (vendor/bin/phpunit).
+/.phpunit.cache/

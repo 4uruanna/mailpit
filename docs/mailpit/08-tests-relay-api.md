@@ -4,6 +4,8 @@
 
 Cette page enchaîne les tests dans l'ordre : d'abord l'API seule, puis le relais, puis le trajet complet, et enfin les pannes. **Ne passez à une étape que si la précédente donne le résultat attendu.** En cas d'écart, notez-le dans le [journal des tests](#journal-des-tests) en bas de page.
 
+> 💡 Cette recette vérifie l'**installation réelle** (serveur, hébergement, DNS, `.htaccess`…). Le **code** de l'API et du relais a aussi des tests automatisés (PHPUnit), lancés par GitHub Actions à chaque `push` : voir les sections [Tests automatisés de l'API](../../api/README.md#tests-automatisés) et [Tests du relais](../../relay/README.md#tests).
+
 Chaque étape indique **où** la faire :
 
 | Repère | Où |
@@ -126,7 +128,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST https://api.mondomaine.fr/v1/me
 Faites ce test **depuis le serveur Mailpit** (il fonctionne aussi depuis votre ordinateur, le filtre IP ne protégeant que les routes du relais). On vérifie que les fichiers sont **vraiment** protégés : un fichier qu'Apache servirait directement, sans passer par PHP, répondrait `200`.
 
 ```bash
-for p in config.php .ovhconfig .htaccess composer.json composer.lock vendor/autoload.php src/Kernel.php sql/schema.sql var/log/api.log public/.htaccess templates/layout.php bin/create-admin.php; do
+for p in config.php .ovhconfig .htaccess composer.json composer.lock vendor/autoload.php src/Kernel.php sql/schema.sql var/log/api.log public/.htaccess templates/layout.php bin/create-admin.php tests/bootstrap.php phpunit.xml.dist; do
   printf '%-22s ' "$p"; curl -4 -s -o /dev/null -w '%{http_code}\n' "https://api.mondomaine.fr/$p"
 done
 ```

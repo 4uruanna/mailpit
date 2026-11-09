@@ -9,7 +9,8 @@ use Throwable;
 /**
  * Relaie les mails de Mailpit vers l'API, sans rien enregistrer : c'est Mailpit qui sert de file d'attente.
  *
- * 1. Recherche dans Mailpit les mails qui n'ont ni le tag RELAY_TAG_DONE ni RELAY_TAG_FAILED.
+ * 1. Recherche dans Mailpit les mails qui n'ont ni le tag RELAY_TAG_DONE ni RELAY_TAG_FAILED,
+ *    et les traite du plus ancien au plus récent (lots de RELAY_BATCH_SIZE mails).
  * 2. Pour chacun : lit le mail complet (texte, HTML, en-têtes, liste des pièces), l'envoie à l'API,
  *    puis envoie le contenu de chaque pièce que l'API réclame (une requête par pièce, avec SHA-256).
  * 3. Seulement quand l'API répond « complete », pose le tag RELAY_TAG_DONE dans Mailpit.
@@ -30,6 +31,9 @@ final class Worker
     /** Marge sur la taille annoncée par Mailpit lors du téléchargement d'une pièce (octets). */
     private const int DOWNLOAD_MARGIN = 1024 * 1024;
 
+    /** Lots lus au plus par passage : 20 × 50 = les 1000 mails que garde Mailpit (MP_MAX_MESSAGES). */
+    private const int MAX_WINDOWS = 20;
+
     /**
      * Mails en échec passager : prochain essai (en mémoire seulement, remis à zéro au redémarrage).
      *
@@ -45,26 +49,86 @@ final class Worker
     }
 
     /**
-     * Traite un lot de mails en attente.
+     * Traite les mails en attente, du plus ancien au plus récent.
+     *
+     * Mailpit renvoie les résultats du plus récent au plus ancien. Si tout ne tient pas dans un lot,
+     * on lit donc les lots en partant de la fin de la liste (les plus anciens, que MP_MAX_MESSAGES
+     * et MP_MAX_AGE suppriment en premier), puis on remonte vers les plus récents. Un lot dont tous
+     * les mails attendent leur nouvel essai ne bloque pas les suivants.
+     *
+     * Un passage s'arrête dès qu'il a traité RELAY_BATCH_SIZE mails (en finissant le lot en cours)
+     * ou lu MAX_WINDOWS lots.
      *
      * @return bool true s'il reste probablement des mails prêts à traiter tout de suite
      */
     public function sync(): bool
     {
+        $query = $this->config->pendingQuery();
+        $batch = $this->config->batchSize;
+        $seen = [];
+
         try {
-            $result = $this->mailpit->search($this->config->pendingQuery(), $this->config->batchSize);
+            // Première recherche : les plus récents, et surtout le nombre de mails en attente.
+            $first = $this->mailpit->search($query, $batch);
+
+            // Cas courant : tous les mails en attente tiennent dans un lot.
+            if ($first['total'] <= count($first['messages'])) {
+                $this->processWindow($first['messages'], $seen);
+                $this->forgetUnseen($seen);
+
+                return false;
+            }
+
+            // Positions dans la recherche : 0 = le plus récent, total - 1 = le plus ancien.
+            // Les mails que l'on relaie sortent de la recherche, mais ils sont plus anciens que
+            // le lot suivant : sa position ne change pas. En revanche, un mail arrivé ou supprimé
+            // pendant le passage décale tout. On le repère au total renvoyé par chaque recherche :
+            // au pire, un mail n'est vu qu'au passage suivant, lancé aussitôt.
+            $end = $first['total'];
+            $expected = $first['total'];
+            $consistent = true;
+            $processed = 0;
+
+            for ($windows = 0; $end > 0 && $windows < self::MAX_WINDOWS && $processed < $batch; $windows++) {
+                $start = max(0, $end - $batch);
+                $result = $this->mailpit->search($query, $end - $start, $start);
+                $consistent = $consistent && $result['total'] === $expected;
+
+                [$done, $removed] = $this->processWindow($result['messages'], $seen);
+                $processed += $done;
+                $expected = $result['total'] - $removed;
+                $end = $start;
+            }
         } catch (TransientException $e) {
             Log::warning('recherche des mails à relayer impossible : ' . $e->getMessage());
 
             return false;
         }
 
-        // Mailpit renvoie les plus récents d'abord : on traite les plus anciens en premier.
-        $messages = array_reverse($result['messages']);
-        $seen = [];
-        $deferred = 0;
+        // Tous les lots lus, sans décalage : on a vu tous les mails en attente.
+        if ($end === 0 && $consistent) {
+            $this->forgetUnseen($seen);
+        }
 
-        foreach ($messages as $summary) {
+        // Des mails plus récents n'ont pas été lus, ou un décalage a pu en faire sauter un : on
+        // continue tout de suite, sauf si tous les mails lus attendaient leur nouvel essai.
+        return $processed > 0 && ($end > 0 || !$consistent);
+    }
+
+    /**
+     * Traite un lot de résultats de recherche, du plus ancien au plus récent, sauf les mails
+     * qui attendent leur nouvel essai.
+     *
+     * @param list<array<string, mixed>> $messages résumés, dans l'ordre de Mailpit (plus récents d'abord)
+     * @param array<string, true> $seen identifiants des mails vus, complété au passage
+     * @return array{int, int} mails traités, et mails sortis de la recherche (relayés, refusés ou supprimés)
+     */
+    private function processWindow(array $messages, array &$seen): array
+    {
+        $processed = 0;
+        $removed = 0;
+
+        foreach (array_reverse($messages) as $summary) {
             $id = $summary['ID'] ?? null;
             if (!is_string($id) || !preg_match('/^[A-Za-z0-9_-]{1,64}$/', $id)) {
                 continue;
@@ -72,34 +136,51 @@ final class Worker
             $seen[$id] = true;
 
             if (($this->retries[$id]['next'] ?? 0) > time()) {
-                $deferred++;
                 continue;
             }
 
-            $this->process($id, $summary);
+            $processed++;
+            if ($this->process($id, $summary)) {
+                $removed++;
+            }
         }
 
-        // Oublie les mails qui ne sont plus en attente (relayés ou supprimés de Mailpit).
-        if ($result['total'] <= count($result['messages'])) {
-            $this->retries = array_intersect_key($this->retries, $seen);
-        }
-
-        return $deferred === 0 && $result['total'] > count($result['messages']);
+        return [$processed, $removed];
     }
 
-    /** @param array<string, mixed> $summary résumé du mail (résultat de recherche Mailpit) */
-    private function process(string $id, array $summary): void
+    /**
+     * Oublie les mails qui ne sont plus en attente (relayés ou supprimés de Mailpit).
+     * À n'appeler que si $seen contient tous les mails en attente.
+     *
+     * @param array<string, true> $seen
+     */
+    private function forgetUnseen(array $seen): void
+    {
+        $this->retries = array_intersect_key($this->retries, $seen);
+    }
+
+    /**
+     * @param array<string, mixed> $summary résumé du mail (résultat de recherche Mailpit)
+     * @return bool true si le mail est sorti de la recherche : tag posé, ou mail supprimé de Mailpit
+     */
+    private function process(string $id, array $summary): bool
     {
         try {
             $this->deliver($id, $summary);
             unset($this->retries[$id]);
+
+            return true;
         } catch (PermanentException $e) {
             unset($this->retries[$id]);
             Log::error(sprintf('mail %s refusé par l\'API (%s) : tag « %s » posé dans Mailpit', $id, $e->getMessage(), $this->config->tagFailed));
             try {
                 $this->mailpit->setTags($id, self::withTag($summary, $this->config->tagFailed));
+
+                return true;
             } catch (TransientException $tagError) {
                 Log::warning(sprintf('mail %s : tag d\'échec non posé (%s), nouvel essai au prochain passage', $id, $tagError->getMessage()));
+
+                return false;
             }
         } catch (TransientException $e) {
             $this->retryLater($id, $e->getMessage());
@@ -107,6 +188,8 @@ final class Worker
             // Bug ou donnée inattendue : le mail reste en attente dans Mailpit, on réessaiera.
             $this->retryLater($id, $e::class . ' : ' . $e->getMessage());
         }
+
+        return false;
     }
 
     /**

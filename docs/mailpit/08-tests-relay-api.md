@@ -494,6 +494,31 @@ rm /tmp/gros.bin
 
 Le mail est quand même livré et tagué `relayed`. Seul le contenu de la pièce manque (état `too_large`).
 
+### Étape 4.3 bis — 🖥️ Serveur : un mail trop volumineux, tronqué par le relais
+
+Au-delà de `max_body_size` (16 Mo par défaut), l'API répond `413` et le relais renvoie le mail raccourci. Pour le tester sans fabriquer un mail de 16 Mo, baissez la limite le temps de l'essai.
+
+1. ☁️ **OVH** : dans `config.php`, section `webhook`, mettez `'max_body_size' => 200000,` (200 Ko), puis envoyez le fichier en FTP.
+2. 🖥️ Un mail d'environ 450 Ko de texte :
+
+```bash
+yes 'Ligne de texte du test de mail trop volumineux, phase 4.3 bis.' | head -n 7000 > /tmp/long.txt
+swaks --server 127.0.0.1 --port 25 --to "${TO:?TO est vide : export TO=essai@votre-sous-domaine}" --header "Subject: Phase 4.3 bis" --body @/tmp/long.txt
+rm /tmp/long.txt
+curl -4 -s -H "Authorization: Bearer $JETON" "$API/v1/messages?limit=1" | grep -oE '"(subject|complete|truncated)":[^,]*'
+```
+
+✅ Attendu dans les logs du relais :
+
+- `[relay] WARN  mail … trop volumineux pour l'API (… octets, limite 200000 octets) : envoi d'une version tronquée de … octets (essai 1/3)` ;
+- puis `… enregistré par l'API (Phase 4.3 bis), 0 pièce(s) envoyée(s), essai 1`.
+
+✅ Attendu côté API : `"subject":"Phase 4.3 bis"`, `"complete":true` et `"truncated":true`. 💻 Dans le Dashboard, le mail porte le badge **tronqué**, et son texte se termine par `[… contenu tronqué par le relais : mail trop volumineux pour l'API]`.
+
+❌ `refusé par l'API (API (message) refus définitif : HTTP 413 …)` sans ligne `version tronquée` : le relais est une version précédente (reconstruisez l'image, [Partie 7](07-relay.md)). `"truncated"` absent de la réponse : l'API est une version précédente (renvoyez `src/` et `templates/` en FTP, et importez la migration `sql/migrations/2026-11-message-truncated.sql`).
+
+3. ☁️ **OVH** : remettez `max_body_size` à sa valeur d'origine (ou retirez la ligne : 16 Mo par défaut) et renvoyez `config.php`.
+
 ### Étape 4.4 — 🖥️ Serveur : une rafale de 10 mails
 
 Ce test vérifie qu'aucun mail n'est ignoré quand ils arrivent dans la même seconde (`MP_WEBHOOK_LIMIT=0`), et que le relais les envoie un par un.

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Tests\Http;
 
+use App\Action\CreateMessageAction;
 use App\Tests\Support\AppTestCase;
 use App\Tests\Support\OnFirstReadStream;
 use App\Tests\Support\TempDir;
@@ -120,16 +121,71 @@ final class RelayRoutesTest extends AppTestCase
     {
         $headers = ['Authorization' => 'Bearer ' . self::RELAY_TOKEN, 'Content-Type' => 'application/json'];
 
-        // Taille annoncée : refusé sans lire le corps.
+        // Taille annoncée : refusé sans lire le corps. La limite est donnée au relais, qui renverra
+        // une version tronquée.
         $response = $this->request('POST', '/v1/messages', $headers + ['Content-Length' => (string) (self::MAX_BODY_SIZE + 1)], '{}');
         self::assertSame(413, $response->getStatusCode());
+        self::assertSame(['error' => 'corps de requête trop volumineux', 'max_body_size' => self::MAX_BODY_SIZE], self::json($response));
 
         // Taille réelle, sans Content-Length.
         $payload = ['Text' => str_repeat('a', self::MAX_BODY_SIZE)] + self::payload('m1');
         $response = $this->postMessage($payload);
         self::assertSame(413, $response->getStatusCode());
-        self::assertSame(['error' => 'corps de requête trop volumineux'], self::json($response));
+        self::assertSame(['error' => 'corps de requête trop volumineux', 'max_body_size' => self::MAX_BODY_SIZE], self::json($response));
         self::assertSame(0, (int) $this->scalar('SELECT COUNT(*) FROM mailpit_messages'));
+    }
+
+    public function testEmptyBodyWithContentLengthIsTooLarge(): void
+    {
+        // Ce que peut faire PHP quand le corps dépasse post_max_size : Content-Length annoncé, corps vide.
+        // Avant : « 400 JSON invalide », refus définitif. Maintenant : 413 avec la limite effective.
+        clearstatcache();
+        $offset = is_file(TempDir::logFile()) ? (int) filesize(TempDir::logFile()) : 0;
+        $headers = ['Authorization' => 'Bearer ' . self::RELAY_TOKEN, 'Content-Type' => 'application/json', 'Content-Length' => '30000'];
+
+        $response = $this->request('POST', '/v1/messages', $headers, '');
+
+        self::assertSame(413, $response->getStatusCode());
+        self::assertSame([
+            'error'         => 'corps de requête vide alors que Content-Length annonce 30000 octets (limite post_max_size de PHP ?)',
+            'max_body_size' => self::MAX_BODY_SIZE,
+        ], self::json($response));
+        self::assertStringContainsString('[messages] corps vide alors que Content-Length annonce 30000 octets', (string) file_get_contents(TempDir::logFile(), offset: $offset));
+
+        // max_body_size au-dessus de post_max_size : la limite donnée est post_max_size.
+        $postMaxSize = CreateMessageAction::postMaxSize();
+        self::assertGreaterThan(0, $postMaxSize, 'post_max_size de PHP (8M par défaut)');
+        $config = $this->config();
+        $config['webhook']['max_body_size'] = $postMaxSize * 2;
+        $this->useConfig($config);
+        $response = $this->request('POST', '/v1/messages', ['Content-Length' => (string) ($postMaxSize + 1)] + $headers, '');
+        self::assertSame(413, $response->getStatusCode());
+        self::assertSame($postMaxSize, self::json($response)['max_body_size']);
+
+        // Corps vide SANS Content-Length : JSON invalide, comme avant.
+        $response = $this->request('POST', '/v1/messages', array_diff_key($headers, ['Content-Length' => 0]), '');
+        self::assertSame(400, $response->getStatusCode());
+        self::assertSame(0, (int) $this->scalar('SELECT COUNT(*) FROM mailpit_messages'));
+    }
+
+    public function testTruncatedMessageIsStoredAndExposed(): void
+    {
+        $response = $this->postMessage(['Truncated' => true] + self::payload('m1'));
+        self::assertSame(201, $response->getStatusCode());
+        self::assertSame(1, (int) $this->scalar("SELECT truncated FROM mailpit_messages WHERE mailpit_id = 'm1'"));
+        self::assertSame(201, $this->postMessage(self::payload('m2'))->getStatusCode());
+
+        // Dans les réponses JSON : la liste et le mail complet.
+        $auth = ['Authorization' => 'Bearer ' . self::RELAY_TOKEN];
+        $list = self::json($this->request('GET', '/v1/messages', $auth));
+        self::assertSame(['m2' => false, 'm1' => true], array_column($list['messages'], 'truncated', 'id'));
+        self::assertTrue(self::json($this->request('GET', '/v1/messages/m1', $auth))['truncated']);
+        self::assertFalse(self::json($this->request('GET', '/v1/messages/m2', $auth))['truncated']);
+
+        // Autre chose qu'un booléen : 422.
+        $response = $this->postMessage(['Truncated' => 'oui'] + self::payload('m3'));
+        self::assertSame(422, $response->getStatusCode());
+        self::assertSame(['error' => 'champ « Truncated » : booléen attendu'], self::json($response));
     }
 
     public function testInvalidPayload(): void

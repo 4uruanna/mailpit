@@ -68,7 +68,7 @@ Elles exigent le jeton du relais, dans l'en-tête `Authorization: Bearer <jeton>
 
 | Méthode | URL | Réponse |
 |---|---|---|
-| `POST` | `/v1/messages` | Corps : le mail en JSON (voir ci-dessous).<br>`201 {"status":"created", "id":"…", "complete":false, "missing":["2","1.3"], "too_large":["4"]}` : message enregistré<br>`200 {"status":"updated"\|"duplicate", …}` : déjà reçu (même ID Mailpit), complété si besoin<br>`400` JSON invalide · `413` trop volumineux · `415` pas du JSON · `422` champ invalide |
+| `POST` | `/v1/messages` | Corps : le mail en JSON (voir ci-dessous).<br>`201 {"status":"created", "id":"…", "complete":false, "missing":["2","1.3"], "too_large":["4"]}` : message enregistré<br>`200 {"status":"updated"\|"duplicate", …}` : déjà reçu (même ID Mailpit), complété si besoin<br>`413 {"error":"…", "max_body_size":16777216}` : plus gros que la limite (en octets), le relais renvoie une version **tronquée** (voir [Mails trop volumineux](#mails-trop-volumineux--tronqués-par-le-relais))<br>`400` JSON invalide · `415` pas du JSON · `422` champ invalide |
 | `POST` | `/v1/messages/{id}/part/{partId}` | Corps : le contenu brut de la pièce (`Content-Type: application/octet-stream`), avec l'en-tête `X-Content-SHA256` (empreinte SHA-256 en hexadécimal).<br>`201 {"status":"stored", "complete":true, "missing":[], …}` : pièce enregistrée<br>`200 {"status":"already-stored", …}` : déjà reçue<br>`404` message ou pièce inconnus (ou mail supprimé pendant l'envoi : la pièce reçue est effacée) · `409` pièce `too_large`, ou déjà reçue avec un autre contenu · `413` au-delà de la limite · `415` mauvais Content-Type · `422` empreinte absente ou différente |
 | `POST` | `/v1/health` | Ping de santé, envoyé par le relais toutes les 30 secondes (voir [Page Statut](#page-statut)). Corps JSON, chaque champ entier ou `null` : `{"latency_ms":85, "pending":0, "failed":2}` (latence du ping précédent en ms, mails en attente et refusés dans Mailpit), 4 Ko au plus. En-tête `Mailpit-Label` facultatif.<br>`200 {"status":"ok", "time":"2026-11-09T08:31:20.474Z"}` : ping enregistré (heure de l'API, UTC)<br>`400` JSON invalide · `413` trop volumineux · `415` pas du JSON · `422` champ invalide (nombre négatif, décimal, texte…) |
 
@@ -126,6 +126,7 @@ Toute autre URL renvoie `404`. Les erreurs (`404`, `405`, `500`…) ont deux for
 | `Text`, `HTML` | colonnes `text_body`, `html_body` |
 | `Headers` (`{"Nom": ["valeur", …]}`) | colonne `headers` |
 | `ReturnPath`, `Date` | colonnes `return_path`, `message_date` |
+| `Truncated` (`true`, facultatif) | colonne `truncated` (`1`) : version raccourcie par le relais, le mail complet dépassait `webhook.max_body_size`. Autre chose qu'un booléen : `422` |
 | `Parts` : `[{"PartID":"2", "Kind":"attachment", "FileName":"devis.pdf", "ContentType":"application/pdf", "ContentID":"", "Size":123456}, …]` | table `mailpit_parts` (une ligne par pièce). `Kind` vaut `attachment` (pièce jointe) ou `inline` (image intégrée au HTML, `cid:…`) |
 
 La colonne `payload` garde le JSON reçu **sans** `Text`, `HTML` ni `Headers`, pour ne pas les stocker deux fois.
@@ -133,6 +134,29 @@ La colonne `payload` garde le JSON reçu **sans** `Text`, `HTML` ni `Headers`, p
 **Pièces jointes.** Le JSON ne contient que leur description. L'API répond avec la liste `missing` des pièces dont elle attend le contenu, que le relais envoie ensuite une par une (`POST /v1/messages/{id}/part/{partId}`). Chaque fichier est vérifié (SHA-256), écrit sur le disque, puis la ligne de `mailpit_parts` passe à l'état `stored`. Le message est **complet** (colonne `completed_at` remplie, `"complete": true`) quand plus aucune pièce n'est attendue.
 
 Une pièce plus grosse que `webhook.max_attachment_size` (**5 Mo** par défaut) n'est pas attendue : sa ligne est enregistrée avec l'état `too_large` (nom, type, taille), sans contenu, et elle est listée dans `too_large`.
+
+### Mails trop volumineux : tronqués par le relais
+
+Le JSON d'un mail (texte + HTML + en-têtes, **sans** les pièces jointes, envoyées à part) ne doit pas dépasser `webhook.max_body_size` (**16 Mo** par défaut). Au-delà, l'API répond `413` avec sa limite :
+
+```json
+{"error": "corps de requête trop volumineux", "max_body_size": 16777216}
+```
+
+Le mail n'est plus perdu : le relais renvoie aussitôt une **version tronquée** qui tient dans cette limite (moins 1 Ko de marge). Il raccourcit d'abord le HTML, puis le texte, puis si besoin les valeurs d'en-têtes les plus longues, sans jamais couper un caractère UTF-8. Il ajoute à la fin du texte (et du HTML) la note `[… contenu tronqué par le relais : mail trop volumineux pour l'API]`, et le champ `"Truncated": true`. Au plus 3 versions tronquées : si l'API répond encore `413`, c'est un refus définitif (tag `relay-failed`). Détail : [relais](../relay/README.md#mails-trop-volumineux).
+
+| Où | Ce qu'on voit |
+|---|---|
+| Base | colonne `mailpit_messages.truncated` à `1` |
+| API (`GET /v1/messages`, `GET /v1/messages/{id}`) | `"truncated": true` |
+| Dashboard | badge **tronqué** dans la liste et sur la page du mail, avec une phrase d'explication |
+| Logs du relais | `mail … trop volumineux pour l'API (… octets, limite … octets) : envoi d'une version tronquée de … octets (essai 1/3)` |
+
+**Même mail reçu deux fois** (ex. `max_body_size` augmenté, puis mail relancé depuis Mailpit) : la version complète l'emporte toujours. Elle remplace le corps d'une version tronquée et remet `truncated` à `0` ; une version tronquée arrivée après la version complète est ignorée. Un résumé seul, sans corps (ancien webhook direct de Mailpit), ne change pas `truncated`.
+
+> 💡 Le mail complet reste dans Mailpit (jusqu'à `MP_MAX_AGE`). Pour éviter de tronquer, augmentez `webhook.max_body_size` dans `config.php` ; MySQL accepte jusqu'à 16 Mo par corps (colonnes `MEDIUMTEXT`).
+
+**Hébergement qui vide les gros corps.** Selon la configuration de PHP, une requête plus grosse que `post_max_size` peut arriver vide. L'API répondait alors `400 JSON invalide`, un refus définitif. Elle le détecte maintenant (en-tête `Content-Length` annoncé, mais corps vide) et répond `413` avec la limite effective, la plus petite de `max_body_size` et `post_max_size` : le relais renvoie une version tronquée, et une ligne `[messages] corps vide alors que Content-Length annonce … octets` est écrite dans `var/log/api.log`. Avec PHP-FPM (cas des hébergements OVH), le corps est en général quand même lu (vérifié en PHP 8.3) : PHP écrit seulement un avertissement dans le log (voir [Dépannage](#dépannage)).
 
 Fichiers sur le disque (dossier `webhook.storage_dir`, par défaut `var/messages/`) :
 
@@ -204,6 +228,7 @@ Espace client OVH → **Bases de données** → **…** → **Aller sur phpMyAdm
 > | `2026-11-dashboard-tokens.sql` | avant l'arrivée du Dashboard | Crée les nouvelles tables et y range les destinataires des mails déjà enregistrés |
 > | `2026-11-login-throttle-ip.sql` | avant la limitation des connexions par adresse | Ajoute la colonne `ip_key` et ses index à `mailpit_login_attempts` |
 > | `2026-11-health-pings.sql` | avant la page **Statut** | Crée la table `mailpit_health_pings` (pings de santé du relais) |
+> | `2026-11-message-truncated.sql` | avant les mails tronqués | Ajoute la colonne `truncated` à `mailpit_messages` (`0` pour les mails déjà enregistrés) |
 >
 > ⚠️ La suppression des mails au bout de 7 jours ne demande aucune migration, mais elle s'applique **dès la mise à jour** : sans clé `max_age_days` dans votre `config.php`, les mails reçus il y a plus de 7 jours sont supprimés (base et pièces jointes) après la première requête du relais. Pour les garder, ajoutez `'max_age_days' => 0` (ou une autre durée) dans la section `webhook` **avant** d'envoyer les nouveaux fichiers. Voir [Rétention](#rétention--7-jours-et-1000-mails-au-plus).
 
@@ -337,9 +362,9 @@ Les tests **PHPUnit** vérifient le code sur votre ordinateur, sans rien déploy
 
 | Suite | Dossier | Ce qui est testé | Base MySQL |
 |---|---|---|---|
-| `unit` | `tests/Unit/` | classes sans base : filtre IP (`IpMatcher`, `ClientIpResolver`), adresses, validation du JSON des mails et des pièces (chaque erreur `422`), configuration (`Settings`), HTTPS (`HttpsDetector` : `HTTPS`, port 443, `X-Forwarded-Proto` d'un proxy de confiance ; `ForceHttpsMiddleware` : `301`, `403`, HSTS), filtres du Dashboard, pages d'erreur du Dashboard (`ErrorPage` : URL concernées, titres et messages selon le code, page minimale si le gabarit ne peut pas être rendu), jetons (`ApiScope`, `Authorization: Bearer`, jeton du relais refusé dans l'URL et avertissement sans sa valeur), page Statut (`HealthReport` : état connecté / déconnecté, créneaux de 5 minutes, disponibilité depuis le premier ping, coupures de plus de 90 s ; `LatencyChart` : graphique SVG, axes à l'heure du Dashboard, résumé accessible), adresse comptée par la limite de connexion (`LoginThrottle::ipKey`), rotation du log (`LogRotator` : seuil, archive remplacée, fichier absent, `log_file` à `null`, verrou pris, échec sans exception, requêtes simultanées dans plusieurs processus) | non |
-| `integration` | `tests/Integration/` | accès à la base : mails, pièces, purge, suppression par âge (`created_at`), pièce d'un mail supprimé, nettoyage (`Maintenance` : mails trop anciens ou en trop, fichiers temporaires vieux ou récents, dossiers et fichiers sans ligne en base, au plus toutes les 15 minutes, verrou, erreur seulement écrite dans le log), liste par adresse (sans corps), mail complet limité aux adresses d'un jeton, suppression, jetons développeurs, limite de connexion au Dashboard (par identifiant et adresse, plafond par adresse, IPv6 par `/64`), pings de santé (`HealthRepository` : heures en UTC, ping précédent, purge) | oui |
-| `http` | `tests/Http/` | l'application complète (`Kernel::create`) avec de fausses requêtes : routes du relais (`403`, `401`, `401` avec `?token=…`, `415`, `400`, `413`, `422`, `201`, `200`), ping de santé (`POST /v1/health` : `403`, `401`, `415`, `413`, `400`, `422`, `200` et ligne enregistrée, pings de plus de 48 h supprimés, nettoyage lancé sans jamais faire échouer le ping), envoi des pièces jusqu'à `"complete": true`, routes des développeurs (liste sans corps, mail complet par son ID, `404` hors des adresses du jeton, jeton du relais selon l'IP), Dashboard (redirection vers la connexion, refus sans jeton anti-CSRF, messages de blocage, cookie de session `Secure`, exemple `curl` de la page du jeton en `https://` derrière le frontal OVH, pages d'erreur HTML `404` / `405` / `500` avec les en-têtes de sécurité, menu seulement si connecté, base injoignable, détail seulement avec `debug`, page **Statut** : « Aucun ping reçu », puis « Connecté », compteurs, graphique, coupure, rechargement automatique qui ne prolonge pas la session), erreurs de l'API toujours en JSON (`404`, `405`, `500`, `base_path`), requêtes en clair (`301`, `403` sans rien enregistrer, proxy de confiance, `force_https` désactivé), nettoyage après les requêtes acceptées du relais (et pas après les autres), pièce d'un mail supprimé pendant l'envoi (`404`, fichier effacé), rotation du log au démarrage d'une requête (et requête servie quand l'archivage échoue) | oui |
+| `unit` | `tests/Unit/` | classes sans base : filtre IP (`IpMatcher`, `ClientIpResolver`), adresses, validation du JSON des mails et des pièces (chaque erreur `422`, champ `Truncated`), configuration (`Settings`), HTTPS (`HttpsDetector` : `HTTPS`, port 443, `X-Forwarded-Proto` d'un proxy de confiance ; `ForceHttpsMiddleware` : `301`, `403`, HSTS), filtres du Dashboard, pages d'erreur du Dashboard (`ErrorPage` : URL concernées, titres et messages selon le code, page minimale si le gabarit ne peut pas être rendu), jetons (`ApiScope`, `Authorization: Bearer`, jeton du relais refusé dans l'URL et avertissement sans sa valeur), page Statut (`HealthReport` : état connecté / déconnecté, créneaux de 5 minutes, disponibilité depuis le premier ping, coupures de plus de 90 s ; `LatencyChart` : graphique SVG, axes à l'heure du Dashboard, résumé accessible), adresse comptée par la limite de connexion (`LoginThrottle::ipKey`), rotation du log (`LogRotator` : seuil, archive remplacée, fichier absent, `log_file` à `null`, verrou pris, échec sans exception, requêtes simultanées dans plusieurs processus) | non |
+| `integration` | `tests/Integration/` | accès à la base : mails, pièces, version tronquée puis complète (et l'inverse), purge, suppression par âge (`created_at`), pièce d'un mail supprimé, nettoyage (`Maintenance` : mails trop anciens ou en trop, fichiers temporaires vieux ou récents, dossiers et fichiers sans ligne en base, au plus toutes les 15 minutes, verrou, erreur seulement écrite dans le log), liste par adresse (sans corps), mail complet limité aux adresses d'un jeton, suppression, jetons développeurs, limite de connexion au Dashboard (par identifiant et adresse, plafond par adresse, IPv6 par `/64`), pings de santé (`HealthRepository` : heures en UTC, ping précédent, purge) | oui |
+| `http` | `tests/Http/` | l'application complète (`Kernel::create`) avec de fausses requêtes : routes du relais (`403`, `401`, `401` avec `?token=…`, `415`, `400`, `413` avec `max_body_size`, corps vidé par PHP (`413` avec la limite effective), `422`, `201`, `200`, mail tronqué enregistré et exposé : `"truncated": true`), ping de santé (`POST /v1/health` : `403`, `401`, `415`, `413`, `400`, `422`, `200` et ligne enregistrée, pings de plus de 48 h supprimés, nettoyage lancé sans jamais faire échouer le ping), envoi des pièces jusqu'à `"complete": true`, routes des développeurs (liste sans corps, mail complet par son ID, `404` hors des adresses du jeton, jeton du relais selon l'IP), Dashboard (redirection vers la connexion, refus sans jeton anti-CSRF, messages de blocage, badge « tronqué », cookie de session `Secure`, exemple `curl` de la page du jeton en `https://` derrière le frontal OVH, pages d'erreur HTML `404` / `405` / `500` avec les en-têtes de sécurité, menu seulement si connecté, base injoignable, détail seulement avec `debug`, page **Statut** : « Aucun ping reçu », puis « Connecté », compteurs, graphique, coupure, rechargement automatique qui ne prolonge pas la session), erreurs de l'API toujours en JSON (`404`, `405`, `500`, `base_path`), requêtes en clair (`301`, `403` sans rien enregistrer, proxy de confiance, `force_https` désactivé), nettoyage après les requêtes acceptées du relais (et pas après les autres), pièce d'un mail supprimé pendant l'envoi (`404`, fichier effacé), rotation du log au démarrage d'une requête (et requête servie quand l'archivage échoue) | oui |
 
 **Prérequis** : PHP 8.4 minimum avec `pdo_mysql` et `mbstring`, Composer, et une base MySQL **de test** (8.4 comme l'hébergement ; 8.0.19 minimum).
 
@@ -402,9 +427,12 @@ Les pièces jointes des tests sont écrites dans un dossier temporaire, supprim�
 | `[log] archivage de « …/api.log » en « …/api.log.1 » impossible` dans le log | PHP ne peut pas renommer le log : rendez `var/log/` accessible en écriture (droits `755` ou `705`). Les requêtes sont servies normalement, mais le log grossit tant que ce n'est pas corrigé |
 | `404` sur `/v1/messages` | `.htaccess` non envoyés (fichiers cachés), ou mauvais dossier racine du multisite. Si l'API est dans un sous-dossier de l'URL, renseignez `base_path` |
 | Certains mails manquent en base | Le relais ne les a pas encore livrés (API en panne, jeton ou IP refusés : il réessaie), ou les a refusés définitivement (tag `relay-failed` dans Mailpit). Voir ses logs : `sudo journalctl -u mailpit-relay -n 50` |
-| `413` sur `POST /v1/messages` | Le JSON du mail (texte + HTML + en-têtes) dépasse `webhook.max_body_size` (16 Mo par défaut) : augmentez-le |
+| `413` sur `POST /v1/messages` | Le JSON du mail (texte + HTML + en-têtes) dépasse `webhook.max_body_size` (16 Mo par défaut). Normal : le relais renvoie une version tronquée (badge **tronqué** dans le Dashboard). Pour garder ces mails entiers, augmentez la limite ([Mails trop volumineux](#mails-trop-volumineux--tronqués-par-le-relais)) |
+| Mail avec le badge **tronqué** (`"truncated": true`) | Trop volumineux pour `webhook.max_body_size` : texte, HTML ou en-têtes raccourcis par le relais. Le mail complet est encore dans Mailpit. Pour le recevoir en entier : augmentez `max_body_size`, puis retirez le tag `relayed` du mail dans Mailpit (le relais le renvoie, la version complète remplace la version tronquée) |
+| Relais : `refusé par l'API (API (message tronqué) refus définitif : HTTP 413 …)` | Même tronqué 3 fois, le mail ne passe pas : un proxy devant l'API limite les requêtes plus bas que `max_body_size`, ou le mail a d'énormes listes de destinataires. Voir les logs du relais |
+| `[messages] corps vide alors que Content-Length annonce … octets` dans le log | PHP a vidé un corps plus gros que `post_max_size` : l'API a répondu `413` avec la limite effective et le relais a renvoyé une version tronquée. Pour que le premier envoi tronqué passe, mettez `webhook.max_body_size` sous `post_max_size` |
 | `413` sur `POST /v1/messages/…/part/…` | La pièce dépasse la limite, alors que sa taille annoncée était plus petite : cas anormal, voir les logs du relais |
-| Log PHP `POST Content-Length of … exceeds the limit` | Un mail au texte ou HTML très lourd, ou une pièce jointe, dépasse `post_max_size` de l'hébergement. Le JSON est quand même lu et enregistré : l'avertissement est sans effet tant que `display_errors` est désactivé (`environment=production` dans `.ovhconfig`) |
+| Log PHP `POST Content-Length of … exceeds the limit` | Un mail au texte ou HTML très lourd, ou une pièce jointe, dépasse `post_max_size` de l'hébergement. Le JSON est quand même lu et enregistré (PHP-FPM, vérifié en PHP 8.3) : l'avertissement est sans effet tant que `display_errors` est désactivé (`environment=production` dans `.ovhconfig`). Si votre PHP vide ces corps, l'API répond `413` (ligne `[messages] corps vide …` plus haut) |
 | Pièce jointe en `too_large` | Elle dépasse `webhook.max_attachment_size` (5 Mo par défaut). Seule sa description est enregistrée |
 | Des mails anciens ont disparu | Normal : les mails sont supprimés 7 jours après leur réception par Mailpit (`webhook.max_age_days`), et seuls les `webhook.max_messages` derniers (1000 par défaut) sont gardés. Chaque nettoyage est résumé dans `var/log/api.log` (`[maintenance] …`), les échecs de purge aussi (`[prune] …`) |
 | Des mails de plus de 7 jours sont encore là | Le nettoyage n'a lieu qu'après une requête du relais (mail, pièce jointe ou ping de santé, toutes les 30 s) : relais arrêté, ou ping de santé désactivé et aucun mail reçu depuis. Lancez-le à la main (`php bin/cleanup.php`), ou planifiez-le ([Rétention](#rétention--7-jours-et-1000-mails-au-plus)) |
@@ -421,6 +449,7 @@ Les pièces jointes des tests sont écrites dans un dossier temporaire, supprim�
 | Dashboard : erreur `500` à la connexion, avec `Field 'ip_key' doesn't have a default value` dans le log | La migration `2026-11-login-throttle-ip.sql` a été importée, mais les fichiers de l'API n'ont pas encore été mis à jour : envoyez la nouvelle version en FTP (au moins `src/` et `templates/`) |
 | Dashboard : erreur `500` à la connexion, avec `Unknown column 'ip_key'` dans le log | La migration `sql/migrations/2026-11-login-throttle-ip.sql` n'a pas été importée |
 | Page **Statut** : erreur `500` avec `Table '…mailpit_health_pings' doesn't exist` dans le log | La migration `sql/migrations/2026-11-health-pings.sql` n'a pas été importée. Le relais reçoit aussi des `500` sur ses pings (ses mails, eux, sont bien enregistrés) |
+| Dashboard : erreur `500` avec `Unknown column 'truncated'` dans le log (le relais reçoit des `500` sur ses mails) | La migration `sql/migrations/2026-11-message-truncated.sql` n'a pas été importée. Les mails attendent dans Mailpit et seront relayés dès qu'elle l'est |
 | Page **Statut** : « Aucun ping reçu » | Le relais n'envoie pas de ping : version précédente (sans `bin/heartbeat.php` : reconstruisez l'image, [Partie 7](../docs/mailpit/07-relay.md)), `RELAY_HEARTBEAT_INTERVAL=0`, ou pings refusés (`401`, `403` : voir `sudo journalctl -u mailpit-relay -n 50`, lignes `ping de santé …`) |
 | Page **Statut** : « Déconnecté depuis … » | Aucun ping depuis plus de 90 secondes : relais arrêté (`sudo systemctl status mailpit-relay`), serveur Mailpit éteint, réseau coupé, ou API en panne (`500` : voir `var/log/api.log`). Les mails attendent dans Mailpit et seront relayés au retour |
 | Relais : `ping de santé non enregistré : API : HTTP 404` dans son journal | L'API en ligne est une version précédente, sans `POST /v1/health` : renvoyez `src/` et `templates/` en FTP et importez la migration `2026-11-health-pings.sql`. Les mails sont relayés normalement en attendant |
@@ -472,7 +501,7 @@ SELECT received_at, latency_ms, pending, failed, source_ip, label FROM mailpit_h
 
 `https://api.amnesic.dev/v1/app/signin`, avec un compte de la table `mailpit_admins` ([étape 2 bis](#2-bis-créer-un-administrateur-du-dashboard)).
 
-- **Messages** : tous les mails enregistrés, 50 par page : date de réception, expéditeur, destinataires (`To`, `Cc`, `Bcc`), sujet et début du texte, nombre de pièces jointes. Un mail dont des pièces sont encore attendues est marqué « incomplet ». Deux filtres :
+- **Messages** : tous les mails enregistrés, 50 par page : date de réception, expéditeur, destinataires (`To`, `Cc`, `Bcc`), sujet et début du texte, nombre de pièces jointes. Un mail dont des pièces sont encore attendues est marqué « incomplet », un mail raccourci par le relais parce qu'il était trop volumineux est marqué « tronqué » ([Mails trop volumineux](#mails-trop-volumineux--tronqués-par-le-relais)). Deux filtres :
   - **Adresses** : liste déroulante de toutes les adresses ayant reçu un mail (`To`, `Cc` ou `Bcc`), avec leur nombre de mails. Cochez-en une ou plusieurs puis **Filtrer** : seuls les mails reçus par l'une d'elles restent ;
   - **Ordre** : du plus récent au plus ancien (par défaut) ou l'inverse. Un clic sur l'en-tête de colonne « Reçu le » inverse aussi l'ordre.
 
@@ -483,7 +512,7 @@ SELECT received_at, latency_ms, pending, failed, source_ip, label FROM mailpit_h
   - **Pièces jointes (N)** : pièces jointes et images intégrées, avec un lien **Télécharger** (nom de fichier d'origine). Une pièce trop volumineuse (`too_large`) ou pas encore reçue est listée, sans lien ;
   - **En-têtes (N)** : tous les en-têtes du mail, dans l'ordre.
 
-  Chaque onglet a sa propre URL. Le bouton **Supprimer ce mail**, au-dessus des onglets, le supprime après confirmation et ramène à la liste.
+  Chaque onglet a sa propre URL. Le bouton **Supprimer ce mail**, au-dessus des onglets, le supprime après confirmation et ramène à la liste. Un mail tronqué porte le badge « tronqué » au-dessus des onglets, avec une phrase qui l'explique ; la note `[… contenu tronqué par le relais …]` termine son texte et son HTML.
 
 Une suppression efface le mail de la base (pièces jointes et destinataires compris) et ses fichiers dans `var/messages/`, comme `DELETE /v1/messages/{id}` côté jetons. Le mail reste dans **Mailpit**. Si le relais l'y renvoyait (mail pas encore complet au moment de la suppression), il réapparaîtrait.
 - **Tokens** : création (un nom suffit) et suppression des jetons développeurs. Un jeton supprimé est refusé (`401`) dès l'appel suivant.
@@ -575,6 +604,7 @@ curl -s 'https://api.amnesic.dev/v1/messages?limit=25&page=2' -H 'Authorization:
       "created_at": "2026-11-09T08:31:20.474Z",
       "received_at": "2026-11-09T08:31:21.205Z",
       "complete": true,
+      "truncated": false,
       "parts": [
         { "part_id": "2", "kind": "attachment", "file_name": "devis.pdf", "content_type": "application/pdf",
           "content_id": "", "size": 1048576, "status": "stored" }
@@ -591,6 +621,7 @@ curl -s 'https://api.amnesic.dev/v1/messages?limit=25&page=2' -H 'Authorization:
 | `snippet` | début du texte du mail (résumé calculé par Mailpit) : suffit parfois pour lire un code court |
 | `date` | en-tête `Date` du mail · `created_at` : réception par Mailpit · `received_at` : réception par l'API (UTC, ISO 8601) |
 | `complete` | `true` quand toutes les pièces attendues sont enregistrées |
+| `truncated` | `true` si le relais a raccourci le mail, trop volumineux pour l'API (texte, HTML, voire en-têtes : voir [Mails trop volumineux](#mails-trop-volumineux--tronqués-par-le-relais)). Le mail complet n'est alors que dans Mailpit |
 | `parts[].status` | `stored` (enregistrée), `pending` (pas encore reçue) ou `too_large` (au-delà de la limite, non enregistrée). Le contenu des pièces n'est pas téléchargeable par l'API |
 | `label`, `username` | en-tête `Mailpit-Label` (`RELAY_LABEL`) et utilisateur SMTP authentifié, ou `null` |
 
@@ -611,6 +642,7 @@ curl -s 'https://api.amnesic.dev/v1/messages/2qGgGUqCw5N3mAOHzyFGoJ' -H 'Authori
   "subject": "Votre code",
   "snippet": "Votre code de confirmation : 482913",
   "complete": true,
+  "truncated": false,
   "parts": [ { "part_id": "2", "kind": "attachment", "file_name": "devis.pdf", "…": "…" } ],
   "…": "… (tous les champs de la liste)",
   "text": "Votre code de confirmation : 482913\n",

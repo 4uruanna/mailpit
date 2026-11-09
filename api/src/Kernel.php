@@ -89,6 +89,7 @@ final class Kernel
             $settings->maxBodySize,
             $settings->maxPartSize,
             $settings->maxMessages,
+            CreateMessageAction::postMaxSize(),
         );
         $upload = new UploadPartAction($messages, $files, $responseFactory, $settings->maxPartSize);
         $healthPings = new HealthRepository($database);

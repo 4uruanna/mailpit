@@ -123,6 +123,16 @@ final class MessageTest extends TestCase
         self::assertNull(Message::fromArray(['Date' => ''] + self::summary())->date);
     }
 
+    public function testTruncatedFlag(): void
+    {
+        // Absent (ou null) : version complète.
+        self::assertFalse(Message::fromArray(self::full())->truncated);
+        self::assertFalse(Message::fromArray(['Truncated' => null] + self::full())->truncated);
+        self::assertFalse(Message::fromArray(['Truncated' => false] + self::full())->truncated);
+        // Version raccourcie par le relais (mail trop volumineux pour l'API).
+        self::assertTrue(Message::fromArray(['Truncated' => true] + self::full())->truncated);
+    }
+
     public function testSizeAsFloatIsAccepted(): void
     {
         // json_decode renvoie un float au-delà de PHP_INT_MAX, ou pour « 1234.0 ».
@@ -148,6 +158,8 @@ final class MessageTest extends TestCase
         yield 'Date invalide'             => [['Date' => 'pas une date'] + $summary, 'champ « Date » : date invalide'];
         yield 'Subject pas un texte'      => [['Subject' => ['a']] + $summary, 'champ « Subject » : texte attendu'];
         yield 'Text pas un texte'         => [['Text' => 12] + $summary, 'champ « Text » : texte attendu'];
+        yield 'Truncated en texte'        => [['Truncated' => 'true'] + $summary, 'champ « Truncated » : booléen attendu'];
+        yield 'Truncated en nombre'       => [['Truncated' => 1] + $summary, 'champ « Truncated » : booléen attendu'];
         yield 'Size négative'             => [['Size' => -1] + $summary, 'champ « Size » : entier positif attendu'];
         yield 'Attachments en texte'      => [['Attachments' => '2'] + $summary, 'champ « Attachments » : entier positif attendu'];
         yield 'From pas un objet'         => [['From' => 'alice@example.com'] + $summary, 'champ « From » : adresse invalide'];

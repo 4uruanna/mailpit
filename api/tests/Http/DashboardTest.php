@@ -160,6 +160,25 @@ final class DashboardTest extends AppTestCase
         self::assertSame('Projet A', $this->scalar('SELECT name FROM mailpit_tokens'));
     }
 
+    public function testTruncatedMessageHasABadge(): void
+    {
+        $this->postMessage(['Truncated' => true] + self::payload('m1'));
+        $this->postMessage(self::payload('m2'));
+        $this->signIn();
+
+        // Liste : badge sur le mail tronqué seulement.
+        $body = (string) $this->request('GET', '/v1/app/messages', ip: self::OTHER_IP)->getBody();
+        self::assertSame(1, substr_count($body, '>tronqué</span>'));
+        self::assertMatchesRegularExpression('#Sujet m1</a>(?:(?!</tr>).)*<span class="tag warn"[^>]*>tronqué</span>#s', $body);
+
+        // Page du mail : badge et explication.
+        $body = (string) $this->request('GET', '/v1/app/messages/m1', ip: self::OTHER_IP)->getBody();
+        self::assertStringContainsString('<span class="tag warn">tronqué</span>', $body);
+        self::assertStringContainsString('Ce mail dépassait la taille maximale acceptée par l\'API', $body);
+        $body = (string) $this->request('GET', '/v1/app/messages/m2', ip: self::OTHER_IP)->getBody();
+        self::assertStringNotContainsString('tronqué', $body);
+    }
+
     public function testSessionCookieIsSecureInHttps(): void
     {
         self::assertSame(200, $this->request('GET', '/v1/app/signin', ip: self::OTHER_IP)->getStatusCode());

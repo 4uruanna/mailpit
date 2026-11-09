@@ -11,6 +11,8 @@ declare(strict_types=1);
  *   POST /v1/health                       enregistre un ping de santé
  *
  * État : api.token (jeton attendu), api.max_part_size (pièces plus grosses : « too_large »),
+ * api.max_body_size (JSON du mail plus gros : 413 avec {"max_body_size": N}, ou sans ce champ si
+ * api.hide_max_body_size vaut true),
  * api.message_status / api.part_status (code d'erreur forcé, ou null), api.failing (ID => code
  * d'erreur forcé pour ce mail seulement), api.messages (ID => JSON reçu + « _label »), api.parts
  * (« ID/PartID » => {sha256, size}), api.health_failures (nombre de pings à refuser en 503 avant
@@ -68,6 +70,10 @@ $completion = static function (array $data, string $id): array {
 if ($method === 'POST' && $path === '/v1/messages') {
     if (($api['message_status'] ?? null) !== null) {
         $reply($api['message_status'], ['error' => 'erreur simulée']);
+    }
+    $limit = $api['max_body_size'] ?? null;
+    if ($limit !== null && strlen($body) > $limit) {
+        $reply(413, ['error' => 'corps de requête trop volumineux'] + (($api['hide_max_body_size'] ?? false) ? [] : ['max_body_size' => $limit]));
     }
     $message = json_decode($body, true);
     if (($headers['content-type'] ?? '') !== 'application/json' || !is_array($message) || !is_string($message['ID'] ?? null)) {

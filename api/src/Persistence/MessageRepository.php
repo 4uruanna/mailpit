@@ -25,19 +25,37 @@ final readonly class MessageRepository
             mailpit_id, message_id, from_name, from_address,
             to_addresses, cc_addresses, bcc_addresses, reply_to,
             subject, snippet, text_body, html_body, headers, return_path, message_date,
-            tags, size, attachments, smtp_username, mailpit_label, created_at, source_ip, payload
+            tags, size, attachments, smtp_username, mailpit_label, created_at, source_ip, payload, truncated
         ) VALUES (
             :mailpit_id, :message_id, :from_name, :from_address,
             :to_addresses, :cc_addresses, :bcc_addresses, :reply_to,
             :subject, :snippet, :text_body, :html_body, :headers, :return_path, :message_date,
-            :tags, :size, :attachments, :smtp_username, :mailpit_label, :created_at, :source_ip, :payload
+            :tags, :size, :attachments, :smtp_username, :mailpit_label, :created_at, :source_ip, :payload, :truncated
         ) AS new
         ON DUPLICATE KEY UPDATE
+            -- Version tronquée par le relais (mail trop volumineux) : une version complète la remplace
+            -- toujours ; une version tronquée ne remplace jamais le corps d'une version complète déjà
+            -- enregistrée ; un résumé seul (sans corps) ne change rien au drapeau. « truncated » est
+            -- calculé EN PREMIER, sur l'ancienne ligne (MySQL applique les affectations dans l'ordre) :
+            -- les colonnes suivantes lisent déjà sa nouvelle valeur.
+            truncated    = CASE
+                WHEN new.text_body IS NULL AND new.html_body IS NULL AND new.headers IS NULL
+                    THEN mailpit_messages.truncated
+                WHEN new.truncated = 1 AND mailpit_messages.truncated = 0 AND (mailpit_messages.text_body IS NOT NULL
+                    OR mailpit_messages.html_body IS NOT NULL OR mailpit_messages.headers IS NOT NULL)
+                    THEN 0
+                ELSE new.truncated
+            END,
             -- Le contenu d'un mail ne change pas dans Mailpit : on ne fait que compléter
             -- ce qui manquait (ex. résumé reçu par l'ancien webhook direct de Mailpit, puis mail complet).
-            text_body    = COALESCE(new.text_body, mailpit_messages.text_body),
-            html_body    = COALESCE(new.html_body, mailpit_messages.html_body),
-            headers      = COALESCE(new.headers, mailpit_messages.headers),
+            -- Seule exception : une version tronquée arrivée après la version complète est ignorée
+            -- (new.truncated = 1 alors que la ligne est restée complète).
+            text_body    = IF(new.truncated > mailpit_messages.truncated,
+                COALESCE(mailpit_messages.text_body, new.text_body), COALESCE(new.text_body, mailpit_messages.text_body)),
+            html_body    = IF(new.truncated > mailpit_messages.truncated,
+                COALESCE(mailpit_messages.html_body, new.html_body), COALESCE(new.html_body, mailpit_messages.html_body)),
+            headers      = IF(new.truncated > mailpit_messages.truncated,
+                COALESCE(mailpit_messages.headers, new.headers), COALESCE(new.headers, mailpit_messages.headers)),
             return_path  = IF(new.return_path <> '', new.return_path, mailpit_messages.return_path),
             message_date = COALESCE(new.message_date, mailpit_messages.message_date)
         SQL;
@@ -63,6 +81,9 @@ final readonly class MessageRepository
     /**
      * Enregistre le message et déclare ses pièces. Un même ID Mailpit n'est stocké qu'une fois :
      * un nouvel envoi complète les champs vides et renvoie la liste des pièces encore attendues.
+     * Version tronquée par le relais ($message->truncated) : une version complète reçue ensuite
+     * remplace son corps et remet « truncated » à 0 ; l'inverse n'arrive jamais, et un résumé seul
+     * (sans corps) garde le drapeau (voir UPSERT_MESSAGE).
      *
      * @param string $payload JSON reçu, sans le corps (Text, HTML, Headers)
      * @return array{status: 'created'|'updated'|'duplicate', complete: bool, missing: list<string>, too_large: list<string>}
@@ -104,6 +125,7 @@ final readonly class MessageRepository
                 'created_at'    => $message->created->format('Y-m-d H:i:s.u'),
                 'source_ip'     => $sourceIp,
                 'payload'       => $payload,
+                'truncated'     => $message->truncated ? 1 : 0,
             ]);
             // MySQL : 1 = ligne ajoutée, 2 = ligne modifiée, 0 = rien n'a changé.
             $status = match ($statement->rowCount()) {
@@ -296,7 +318,7 @@ final readonly class MessageRepository
     private const string COLUMNS = <<<'SQL'
         id, mailpit_id, message_id, from_name, from_address, to_addresses, cc_addresses,
         bcc_addresses, reply_to, subject, snippet, return_path, message_date, tags, size,
-        attachments, smtp_username, mailpit_label, created_at, received_at, completed_at
+        attachments, smtp_username, mailpit_label, created_at, received_at, completed_at, truncated
         SQL;
 
     /**
@@ -612,6 +634,7 @@ final readonly class MessageRepository
             'created_at'  => self::isoDate($row['created_at']),
             'received_at' => self::isoDate($row['received_at']),
             'complete'    => $row['completed_at'] !== null,
+            'truncated'   => (bool) $row['truncated'],
             'parts'       => $parts,
         ];
     }

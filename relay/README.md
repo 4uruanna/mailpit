@@ -85,6 +85,8 @@ Variables d'environnement (voir `relay.env.example`) :
 }
 ```
 
+Un mail trop volumineux pour l'API est renvoyé raccourci, avec en plus `"Truncated": true` (voir [Mails trop volumineux](#mails-trop-volumineux)).
+
 **2. Les pièces** que l'API réclame dans sa réponse (`"missing"`), une par requête `POST /v1/messages/{id}/part/{partId}`, en binaire, avec l'en-tête `X-Content-SHA256`. L'API ne réclame pas les pièces au-delà de sa limite (5 Mo par défaut) : elle les liste dans `"too_large"`, et le relais l'écrit dans ses logs.
 
 **Réponses de l'API :**
@@ -93,8 +95,28 @@ Variables d'environnement (voir `relay.env.example`) :
 |---|---|
 | `2xx` avec `"complete": true` | pose le tag `relayed` : mail livré |
 | `2xx` avec `"complete": false` | envoie les pièces manquantes, puis vérifie à nouveau |
-| Message : `400`, `413`, `415`, `422`<br>Pièce : `409`, `413`, `415` | refus définitif : pose le tag `relay-failed` et écrit l'erreur dans les logs |
+| Message : `413` (trop volumineux) | renvoie aussitôt une **version tronquée** qui tient dans la limite annoncée par l'API (voir [Mails trop volumineux](#mails-trop-volumineux)). Après 3 versions tronquées encore refusées en `413` : refus définitif |
+| Message : `400`, `415`, `422`<br>Pièce : `409`, `413`, `415` | refus définitif : pose le tag `relay-failed` et écrit l'erreur dans les logs |
 | Tout le reste : `401` (jeton), `403` (IP), `404`, `422` sur une pièce (empreinte), `5xx`, API injoignable… | nouvel essai plus tard, sans limite : vous avez le temps de corriger |
+
+### Mails trop volumineux
+
+L'API limite la taille du JSON d'un mail (`webhook.max_body_size`, 16 Mo par défaut ; les pièces jointes n'en font pas partie). Au-delà, elle répond `413` avec sa limite : `{"error":"…", "max_body_size":16777216}`. Plutôt que de refuser le mail, le relais renvoie aussitôt une version raccourcie :
+
+1. **Taille visée** : la limite annoncée (`max_body_size`) moins 1 Ko de marge. Si la réponse n'en donne pas (`413` d'un proxy, API d'une version précédente), la moitié de ce qui vient d'être envoyé, moins 1 Ko.
+2. **Ce qui est raccourci**, dans l'ordre et seulement tant que le JSON dépasse : le **HTML**, puis le **texte**, puis les **valeurs d'en-têtes les plus longues** (terminées par `…`). Jamais au milieu d'un caractère UTF-8, ni d'une balise HTML. Le reste (adresses, sujet, description des pièces) est envoyé tel quel.
+3. **Ce qui est ajouté** : la note `[… contenu tronqué par le relais : mail trop volumineux pour l'API]` à la fin du texte, la même dans un paragraphe à la fin du HTML (s'il y en a un), et le champ `"Truncated": true`. L'API l'enregistre, l'expose (`"truncated": true`) et affiche un badge **tronqué** dans son Dashboard.
+
+Chaque version tronquée est tirée du mail d'origine, plus courte à chaque `413`. Au plus **3 versions tronquées** : si l'API répond encore `413`, c'est un refus définitif (tag `relay-failed`), comme avant. Les pièces jointes ne sont pas concernées : elles sont envoyées à part, et l'API ne réclame pas celles qui dépassent sa propre limite (`too_large`).
+
+Chaque envoi tronqué est écrit dans le journal, avec la taille d'origine et la taille envoyée :
+
+```
+[relay] WARN  mail 2qGgGUqCw5N3mAOHzyFGoJ trop volumineux pour l'API (18874368 octets, limite 16777216 octets) : envoi d'une version tronquée de 16776190 octets (essai 1/3)
+[relay] INFO  mail 2qGgGUqCw5N3mAOHzyFGoJ enregistré par l'API (Rapport mensuel), 2 pièce(s) envoyée(s), essai 1
+```
+
+> 💡 Le mail complet reste dans Mailpit. Pour l'avoir en entier dans l'API : augmentez `webhook.max_body_size` dans son `config.php`, puis retirez le tag `relayed` du mail dans Mailpit. Le relais le renvoie, et l'API remplace la version tronquée par la version complète.
 
 ## Ping de santé
 
@@ -132,6 +154,7 @@ Si le processus du ping s'arrête (plantage), `bin/relay.php` s'arrête en erreu
 - Un mail **supprimé de Mailpit** avant d'avoir été relayé (à la main, ou par `MP_MAX_MESSAGES` / `MP_MAX_AGE`) ne peut plus l'être : c'est la seule copie. Avec `MP_MAX_MESSAGES=1000` et `MP_MAX_AGE=7d`, cela n'arrive que si plus de 1000 mails arrivent pendant une panne de l'API, ou si elle dure plus de 7 jours (l'API supprimerait de toute façon ces mails au bout de 7 jours : `webhook.max_age_days`). Au retour de l'API, le relais commence par les plus anciens, les prochains à être supprimés.
 - Un passage lit au plus 20 lots de `RELAY_BATCH_SIZE` mails (1000 avec la valeur par défaut). Au-delà, si tous les mails lus attendent leur nouvel essai, les plus récents attendent le passage où les plus anciens sont réessayés.
 - Retirer le tag `relayed` d'un mail dans l'interface de Mailpit le fait renvoyer. C'est sans risque, car l'API le reconnaît comme un doublon.
+- Un mail trop volumineux pour l'API n'y est enregistré qu'en **version tronquée** (texte, HTML, voire en-têtes raccourcis) : le reste n'est que dans Mailpit, jusqu'à ce qu'il l'y supprime. Voir [Mails trop volumineux](#mails-trop-volumineux).
 - Le relais garde en mémoire seulement le délai avant le prochain essai de chaque mail en échec. Après un redémarrage, tous les mails en attente sont réessayés tout de suite.
 
 ## Tests
@@ -149,14 +172,15 @@ vendor/bin/phpunit
 | `tests/ConfigTest.php` | variables `RELAY_…` : valeurs par défaut, chaque erreur (dont `RELAY_API_URL` en `http://` hors `localhost`), `relay.env.example` |
 | `tests/HttpTest.php` | client HTTP contre un petit serveur `php -S` : en-têtes, authentification, taille maximale, délai, redirection non suivie |
 | `tests/ReceiverTest.php` | récepteur (`public/index.php`) : `POST /hook`, `GET /health`, `405`, `404`, et le signal `SIGUSR1` qui réveille le worker |
-| `tests/WorkerTest.php` | le relais de bout en bout (voir ci-dessous) |
+| `tests/WorkerTest.php` | le relais de bout en bout (voir ci-dessous), dont les mails trop volumineux : `413` avec `max_body_size` ⇒ version tronquée (UTF-8 valide, note, `"Truncated": true`) puis tag `relayed` ; `413` sans limite ⇒ moitié de l'envoi précédent ; `413` après 3 versions tronquées ⇒ tag `relay-failed` |
+| `tests/MessageTruncatorTest.php` | version tronquée d'un mail : taille visée, HTML puis texte puis en-têtes les plus longs, jamais un caractère UTF-8 ni une balise coupés, notes ajoutées, mail impossible à réduire |
 | `tests/HeartbeatTest.php` | ping de santé contre les mêmes faux serveurs : latence du ping précédent, compteurs en attente / refusés, Mailpit injoignable (ping sans compteurs), API injoignable ou jeton refusé, journal (premier échec, rappel après 10 minutes, rétablissement) avec une horloge simulée |
 | `tests/RelayProcessTest.php` | `bin/relay.php` lancé comme dans le conteneur : le ping de santé tourne à côté du Worker, son arrêt fait quitter le relais en erreur (récepteur arrêté aussi), `SIGTERM` arrête tout, `RELAY_HEARTBEAT_INTERVAL=0` ne le lance pas. Demande `pcntl` et `posix` (sinon : ignoré, « skipped ») |
 
 Pour le Worker, les tests lancent deux faux serveurs `php -S 127.0.0.1:<port libre>`, qui partagent leur état dans un fichier temporaire :
 
 - un **faux Mailpit** (`tests/Fixtures/mailpit-router.php`) : recherche (filtres `!tag:` et `tag:`), mail complet, en-têtes, pièces, `PUT` des tags et du « non lu » ;
-- une **fausse API** (`tests/Fixtures/api-router.php`) : `POST /v1/messages`, `POST /v1/messages/{id}/part/{partId}` et `POST /v1/health`, avec contrôle du jeton et du SHA-256.
+- une **fausse API** (`tests/Fixtures/api-router.php`) : `POST /v1/messages`, `POST /v1/messages/{id}/part/{partId}` et `POST /v1/health`, avec contrôle du jeton et du SHA-256, et une taille maximale du mail (`413`, avec ou sans `max_body_size`).
 
 Le Worker tourne dans un processus séparé (`tests/Fixtures/run-worker.php`, chargé par `src/bootstrap.php` comme en production), et ses logs sont vérifiés. Cas couverts : livraison complète puis tag `relayed`, pièces envoyées avec le bon SHA-256, remise en « non lu », refus définitif (`422`, `409`) ⇒ tag `relay-failed`, erreur passagère (`500`, `401`) ⇒ pas de tag et nouvel essai différé, empreinte de Mailpit différente, pièces `too_large`, rattrapage d'un retard du plus ancien au plus récent sur plusieurs lots, lot le plus ancien entièrement en attente de nouvel essai (les suivants sont quand même relayés), mail arrivé pendant un passage (décalage repéré, nouveau passage aussitôt), Mailpit injoignable.
 

@@ -62,6 +62,9 @@ return [
 
         // Taille maximale du JSON d'un mail (en-têtes, texte, HTML), en octets.
         // Les pièces jointes n'en font pas partie : elles sont envoyées à part.
+        // Un mail plus gros n'est pas perdu : l'API répond 413 avec cette limite, et le relais
+        // renvoie une version tronquée (badge « tronqué » dans le Dashboard).
+        // MySQL accepte au plus 16 Mo par corps (texte, HTML).
         'max_body_size' => 16 * 1024 * 1024,
 
         // Taille maximale d'UNE pièce jointe (ou image intégrée), en octets.

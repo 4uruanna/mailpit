@@ -50,6 +50,13 @@ $statusLabel = ['pending' => 'pas encore reçue', 'too_large' => 'trop volumineu
     </form>
 </div>
 
+<?php if ($message['truncated']): ?>
+<p class="flash warn"><span class="tag warn">tronqué</span>
+    Ce mail dépassait la taille maximale acceptée par l'API (<code>webhook.max_body_size</code>) : le relais l'a raccourci
+    (HTML, puis texte, voire les en-têtes les plus longs) pour qu'il soit quand même enregistré. Les pièces jointes ne sont pas concernées.
+    Le mail complet reste lisible dans Mailpit tant qu'il n'y est pas supprimé.</p>
+<?php endif; ?>
+
 <nav class="tabs" aria-label="Sections du mail">
     <?php foreach ($tabs as $name => $label): ?>
         <a href="<?= $e($self(['tab' => $tabParam($name)])) ?>" <?= $tab === $name ? 'class="active" aria-current="page"' : '' ?>><?= $e($label) ?></a>

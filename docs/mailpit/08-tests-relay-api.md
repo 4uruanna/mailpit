@@ -247,7 +247,8 @@ Nettoyez ensuite comme à l'étape 2.5 (`test-manuel-5mo`), et supprimez le fich
 Suivez la [Partie 7, étapes 1 à 8](07-relay.md#étape-1--installer-les-outils), avec deux précautions pour les tests :
 
 - dans `relay.env`, mettez `RELAY_API_TOKEN` = le jeton de la phase 1 ;
-- ajoutez `RELAY_QUERY=after:AAAA-MM-JJ`, avec **la date du jour**. Sans cette ligne, le relais enverrait à l'API **tous** les mails déjà présents dans Mailpit, y compris ceux des tests précédents.
+- ajoutez `RELAY_QUERY=after:AAAA-MM-JJ`, avec **la date du jour**. Sans cette ligne, le relais enverrait à l'API **tous** les mails déjà présents dans Mailpit, y compris ceux des tests précédents ;
+- **si ufw est actif**, n'oubliez pas ses règles : sortie des conteneurs et DNS interne de Podman (Partie 7, étape 1), SMTP entrant sur le réseau `mailpit` (encadré de l'étape 4). Sans elles, la construction de l'image échoue (`DNS: transient error`), le relais ne trouve pas Mailpit (`Resolving timed out`), ou plus aucun mail n'arrive d'Internet.
 
 ### Étape 3.2 — 🖥️ Serveur : le relais a démarré avec la bonne configuration
 
@@ -480,13 +481,32 @@ On simule un jeton désynchronisé, par exemple après avoir changé `config.php
 
 ### Étape 5.3 — 🖥️ Serveur : renvoyer un mail déjà relayé
 
-Dans l'interface de Mailpit ([tunnel SSH](01-podman.md#étape-7--accéder-à-linterface-web)), ouvrez le mail `Phase 4.1` et **retirez** son tag `relayed`.
+Notez d'abord le `total` de l'API :
+
+```bash
+curl -4 -s -H "Authorization: Bearer $JETON" "$API/v1/messages?limit=1" | grep -o '"total":[0-9]*'
+```
+
+Retirez ensuite le tag `relayed` d'un mail déjà livré. Vous pouvez le faire dans l'interface de Mailpit ([tunnel SSH](01-podman.md#étape-7--accéder-à-linterface-web)), ou avec son API, en mettant l'`ID` du mail tel qu'il apparaît dans les logs du relais :
+
+```bash
+read -rsp 'MP_UI_AUTH (admin:motdepasse) : ' MPAUTH; echo
+curl -s -u "$MPAUTH" -X PUT -H 'Content-Type: application/json' \
+  -d '{"IDs":["ID_DU_MAIL"],"Tags":[]}' http://127.0.0.1:8025/api/v1/tags; echo
+```
 
 ✅ Attendu :
 
-- dans les logs, une nouvelle ligne `enregistré par l'API (Phase 4.1)` ;
+- `ok`, puis dans les 30 s une nouvelle ligne `enregistré par l'API (…)` dans les logs du relais ;
 - le tag `relayed` est de nouveau posé ;
-- côté API, **pas** de deuxième ligne : le `total` n'augmente pas (doublon reconnu).
+- côté API, **pas** de deuxième ligne : le `total` ne change pas (doublon reconnu grâce à la contrainte d'unicité sur `mailpit_id`).
+
+Contrôle global : chaque mail tagué `relayed` dans Mailpit correspond à exactement un mail dans l'API. Les deux nombres doivent être égaux (en l'absence de purge et de `RELAY_QUERY`) :
+
+```bash
+curl -s -u "$MPAUTH" 'http://127.0.0.1:8025/api/v1/search?query=tag:relayed&limit=1' | grep -oE '"messages_count":[0-9]*'
+curl -4 -s -H "Authorization: Bearer $JETON" "$API/v1/messages?limit=1" | grep -o '"total":[0-9]*'
+```
 
 ### Étape 5.4 — 🖥️ Serveur : redémarrage complet du serveur (facultatif)
 
@@ -509,11 +529,16 @@ sudo journalctl -u mailpit-relay -n 5 --no-pager
 ## Phase 6 — Remise en ordre
 
 1. 🖥️ `sudo podman exec mailpit-relay php /app/bin/status.php` : **0** en attente, **0** refusé.
-2. 🖥️ **`RELAY_QUERY`** : vous pouvez garder la ligne `after:…`. Elle empêche seulement de relayer les mails reçus **avant** cette date. Si vous la retirez, le relais enverra aussi ces anciens mails à l'API au prochain redémarrage.
-3. ☁️ **Mails de test dans l'API** : supprimez-les si vous voulez une base propre. Supprimez les lignes dans `mailpit_messages` (phpMyAdmin) et les dossiers `var/messages/<ID>/` (FTP). La rétention à 1000 mails les fera de toute façon disparaître.
-4. ☁️ **`config.php`** : vérifiez `'debug' => false`.
-5. ☁️ **`var/log/api.log`** : relisez-le, puis videz-le. Il garde la trace des tests 401 et 403.
-6. Cochez les phases dans le [suivi](#suivi) en haut de page.
+2. 🖥️ Effacez les secrets du terminal : `unset JETON MPAUTH`.
+3. 🖥️ **`RELAY_QUERY`** : vous pouvez garder la ligne `after:…`. Elle empêche seulement de relayer les mails reçus **avant** cette date. Si vous la retirez, lancez `sudo systemctl restart mailpit-relay` : le relais envoie alors ces anciens mails à l'API, un par un. Suivez le rattrapage avec `status.php`, jusqu'à **0** en attente.
+4. ☁️ **Mails de test dans l'API** : supprimez-les si vous voulez une base propre, en visant **uniquement** la période des tests. `created_at` est en UTC. Un `DELETE` sans condition effacerait aussi les anciens mails relayés au point 3, et les vrais mails :
+   ```sql
+   DELETE FROM mailpit_messages WHERE created_at >= 'AAAA-MM-JJ HH:MM:SS';
+   ```
+   Les pièces (`mailpit_parts`) partent avec leurs mails. Supprimez aussi par FTP les dossiers `var/messages/<ID>/` correspondants : la purge automatique ne les retire plus, puisque leurs lignes n'existent plus. La rétention à 1000 mails ferait de toute façon disparaître les tests, base **et** fichiers, si vous les laissez.
+5. ☁️ **`config.php`** : vérifiez `'debug' => false`.
+6. ☁️ **`var/log/api.log`** : relisez-le, puis videz-le. Il garde la trace des tests 401 et 403 (`[auth]`, `[ip-filter]`). Toute autre erreur (PHP, base de données, `[prune]`) est à examiner.
+7. Cochez les phases dans le [suivi](#suivi) en haut de page.
 
 ---
 
@@ -549,6 +574,7 @@ Notez ici chaque écart constaté et sa correction, au fil des essais.
 | 2026-11-09 | 5.2 | Faux jeton : `HTTP 401`, nouvel essai prévu dans 30 s, mail non tagué. Jeton rétabli : mail enregistré aussitôt après le redémarrage | — |
 | 2026-11-09 | 5.3 | Tag `relayed` retiré via l'API de Mailpit (`PUT /api/v1/tags`) : mail renvoyé, reconnu comme doublon (contrainte `uq_mailpit_id`), tag reposé. Total API : 22 | — |
 | 2026-11-09 | 5.4 | Redémarrage du serveur : relais démarré seul (13:42:33), mail `Apres reboot` enregistré par l'API, sans `WARN` ni `ERROR` | — |
+| 2026-11-09 | 6 | `RELAY_QUERY` retiré : les mails antérieurs aux tests sont envoyés à l'API | Phase 6 : le nettoyage de la base vise désormais la seule période des tests |
 
 ---
 

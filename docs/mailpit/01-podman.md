@@ -166,6 +166,8 @@ sudo ufw status                 # doit afficher : 10.88.0.0/16 1025/tcp  ALLOW F
 
 Pour vérifier le réseau du conteneur : `sudo podman network inspect podman | grep subnet`.
 
+> ℹ️ Si vous installez ensuite le relais ([Partie 7](07-relay.md)), Mailpit passe sur le réseau `mailpit` (`10.89.25.0/24`) : cette règle est alors remplacée, et d'autres règles ufw sont nécessaires (sortie des conteneurs, DNS interne de Podman). Tout est décrit dans la Partie 7, étapes 1 et 4.
+
 Si vous avez activé le **pare-feu réseau OVH** (« Edge Network Firewall ») sur l'IP du serveur dans l'espace client, autorisez-y aussi le TCP 25 entrant.
 
 ### Serveur à la maison (derrière une box)

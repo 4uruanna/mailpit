@@ -522,6 +522,7 @@ Notez ici chaque écart constaté et sa correction, au fil des essais.
 | 2026-11-09 | 1.2 | `schema.sql` importé (seul fichier SQL depuis le retrait des upgrades), tables visibles, MySQL 8.4 | — |
 | 2026-11-09 | 1.3 | `403` depuis l'ordinateur, `401` (sans jeton) depuis le serveur Mailpit | Étape 1.4 déplacée sur le serveur : depuis une IP refusée, le `403` du filtre IP masque les fichiers servis directement |
 | 2026-11-09 | 1.4 | Depuis le serveur : `403` ou `404` sur les 10 chemins, aucun `200` | — |
+| 2026-11-09 | 2.2 | Sans jeton `401`, faux jeton `401`, bon jeton `200` + liste vide (base joignable) | — |
 
 ---
 

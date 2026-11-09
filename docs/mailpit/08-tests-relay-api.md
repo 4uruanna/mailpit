@@ -119,15 +119,19 @@ curl -s -o /dev/null -w '%{http_code}\n' https://api.mondomaine.fr/v1/messages
 | `500` | `vendor/` ou `config.php` absent, ou `config.php` invalide. Le détail est dans `api/var/log/api.log` (FTP) |
 | `200` | ⚠️ Le filtre IP ne fonctionne pas. Votre IP est-elle par erreur dans `allowed_ips` ? |
 
-### Étape 1.4 — 💻 Ordinateur : les fichiers sensibles sont inaccessibles
+### Étape 1.4 — 🖥️ Serveur : les fichiers sensibles sont inaccessibles
+
+Faites ce test **depuis le serveur Mailpit**, et non depuis votre ordinateur. Depuis une IP non autorisée, le filtre IP de l'API répond `403` à toutes les URL. Ce `403` cacherait un fichier qu'Apache servirait directement, sans passer par PHP. Depuis le serveur, le filtre laisse passer : on voit donc si les fichiers sont **vraiment** protégés.
 
 ```bash
-for p in config.php .ovhconfig vendor/autoload.php var/log/api.log composer.json; do
-  printf '%-22s ' "$p"; curl -s -o /dev/null -w '%{http_code}\n' "https://api.mondomaine.fr/$p"
+for p in config.php .ovhconfig .htaccess composer.json composer.lock vendor/autoload.php src/Kernel.php sql/schema.sql var/log/api.log public/.htaccess; do
+  printf '%-22s ' "$p"; curl -4 -s -o /dev/null -w '%{http_code}\n' "https://api.mondomaine.fr/$p"
 done
 ```
 
 ✅ Attendu : `403` ou `404` sur chaque ligne. **Aucun `200`.**
+
+❌ Un `200` : le fichier est lisible depuis Internet. Vérifiez que les `.htaccess` sont bien sur l'hébergement, et que le dossier racine du multisite est `api/public` (ou `api`, mais jamais le dossier qui contient l'hébergement entier).
 
 ---
 
@@ -516,6 +520,7 @@ Notez ici chaque écart constaté et sa correction, au fil des essais.
 | 2026-11-09 | 0.1 | Mailpit tourne, `swaks` → `250`, l'API locale renvoie `"Subject":"Phase 0"` | — |
 | 2026-11-09 | 0.2 | IPv4 fixe. IPv6 = adresse temporaire (change régulièrement) | Seule l'IPv4 dans `allowed_ips`. Tous les `curl` vers l'API passent en `curl -4` |
 | 2026-11-09 | 1.2 | `schema.sql` importé (seul fichier SQL depuis le retrait des upgrades), tables visibles, MySQL 8.4 | — |
+| 2026-11-09 | 1.3 | `403` depuis l'ordinateur, `401` (sans jeton) depuis le serveur Mailpit | Étape 1.4 déplacée sur le serveur : depuis une IP refusée, le `403` du filtre IP masque les fichiers servis directement |
 
 ---
 

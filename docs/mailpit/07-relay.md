@@ -58,6 +58,15 @@ sudo ufw route allow from 10.89.25.0/24 comment 'Podman : sortie du reseau mailp
 
 Ces règles laissent les conteneurs sortir et recevoir les réponses. Elles n'ouvrent **aucun** port depuis l'extérieur.
 
+Il faut aussi laisser les conteneurs du réseau `mailpit` interroger son **DNS interne** (`aardvark-dns`, à l'adresse `10.89.25.1`). Cette adresse est celle du serveur lui-même, et non une destination routée : ufw la filtre donc comme du trafic **entrant**, bloqué par `deny (incoming)`. Sans cette règle, le relais ne trouve pas Mailpit par son nom (`Resolving timed out`, et des lignes `UFW BLOCK … DST=10.89.25.1 … DPT=53` dans `journalctl -k`) :
+
+```bash
+sudo ufw allow proto udp from 10.89.25.0/24 to 10.89.25.1 port 53 comment 'Podman : DNS interne du reseau mailpit'
+sudo ufw allow proto tcp from 10.89.25.0/24 to 10.89.25.1 port 53 comment 'Podman : DNS interne du reseau mailpit'
+```
+
+Ces deux règles n'acceptent que les requêtes venues des conteneurs du réseau `mailpit`, et seulement sur le port DNS : rien ne s'ouvre vers Internet ni vers le réseau local.
+
 Pour vérifier depuis un conteneur jetable :
 
 ```bash
@@ -307,6 +316,7 @@ Un arrêt du relais ne fait perdre **aucun** mail, même ceux arrivés pendant l
 |---|---|
 | Logs du relais : `configuration invalide : …` | Valeur manquante ou mal écrite dans `/etc/mailpit/relay.env` (le message dit laquelle) |
 | Build de l'image : `DNS: transient error`, puis `unable to select packages` | ufw bloque la sortie des conteneurs (`deny (routed)`) : voir l'[étape 1](#si-ufw-est-actif--laisser-sortir-les-conteneurs) |
+| Relais : `Mailpit /api/v1/search : Resolving timed out` (ou `Connection timeout`) en boucle | ufw bloque le DNS interne de Podman (`UFW BLOCK … DST=10.89.25.1 … DPT=53` dans `sudo journalctl -k`) : règles DNS de l'[étape 1](#si-ufw-est-actif--laisser-sortir-les-conteneurs) |
 | Relais : `API (message) injoignable : … Could not resolve host` ou `timed out` dès le premier mail | Même cause : règle `ufw route allow from 10.89.25.0/24` manquante (étape 1) |
 | Plus aucun mail n'arrive depuis Internet après l'étape 8 (mais `swaks` vers `127.0.0.1` passe) | Règle ufw du SMTP pas adaptée au réseau `mailpit` : voir l'encadré de l'[étape 4](#étape-4--créer-un-réseau-privé-pour-mailpit-et-le-relais) |
 | `systemctl start mailpit-relay` : image introuvable | L'étape 3 n'a pas été faite, ou le nom ne correspond pas à `Image=` |

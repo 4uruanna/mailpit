@@ -16,13 +16,17 @@ use Psr\Http\Server\RequestHandlerInterface;
 /**
  * Commun à toutes les pages du Dashboard (/v1/app) :
  *  - démarre la session (cookie Secure si la page est en HTTPS, même détection que
- *    ForceHttpsMiddleware : derrière un proxy de confiance, X-Forwarded-Proto) ;
+ *    ForceHttpsMiddleware : derrière un proxy de confiance, X-Forwarded-Proto). Un GET avec
+ *    ?auto=1 (rechargement automatique de la page Statut) ne compte pas comme une activité ;
  *  - refuse tout formulaire POST sans le bon jeton anti-CSRF (champ « _csrf ») ;
  *  - ajoute les en-têtes de sécurité (SecurityHeaders : pas de cache, pas d'iframe, seul le script
  *    dashboard.js), sauf ceux que la page a déjà fixés.
  */
 final readonly class DashboardMiddleware implements MiddlewareInterface
 {
+    /** Paramètre des rechargements automatiques (?auto=1), qui ne prolongent pas la session. */
+    public const string AUTO_REFRESH = 'auto';
+
     public function __construct(
         private Session $session,
         private View $view,
@@ -32,7 +36,8 @@ final readonly class DashboardMiddleware implements MiddlewareInterface
 
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
-        $this->session->start($this->https->isHttps($request));
+        $automatic = $request->getMethod() === 'GET' && ($request->getQueryParams()[self::AUTO_REFRESH] ?? null) === '1';
+        $this->session->start($this->https->isHttps($request), touch: !$automatic);
 
         $response = null;
         if ($request->getMethod() === 'POST') {

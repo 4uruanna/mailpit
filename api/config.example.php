@@ -77,8 +77,9 @@ return [
 
         // Les mails sont supprimés (base ET pièces jointes) ce nombre de jours après leur
         // réception par Mailpit. Mettez la même durée dans MP_MAX_AGE de Mailpit (ex. 7d).
-        // Nettoyage automatique, au plus toutes les 15 minutes, après une requête du relais :
-        // aucune tâche planifiée n'est nécessaire (voir « Rétention » dans le README).
+        // Nettoyage automatique, au plus toutes les 15 minutes, après une requête du relais
+        // (un mail, ou son ping de santé toutes les 30 secondes) : aucune tâche planifiée
+        // n'est nécessaire (voir « Rétention » dans le README).
         // 0 = jamais (seule la limite max_messages s'applique).
         'max_age_days' => 7,
 
@@ -94,7 +95,7 @@ return [
         // Déconnexion automatique après ce nombre de secondes d'inactivité.
         'session_lifetime' => 2 * 60 * 60,
 
-        // Fuseau horaire d'affichage des dates (elles sont stockées en UTC).
+        // Fuseau horaire d'affichage des dates (elles sont stockées en UTC), page Statut comprise.
         'timezone' => 'Europe/Paris',
     ],
 

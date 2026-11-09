@@ -3,16 +3,19 @@
 declare(strict_types=1);
 
 /*
- * Fausse API pour les tests du Worker (php -S … api-router.php), avec l'état de FakeState
- * (variable d'environnement FAKE_STATE). Mêmes réponses que la vraie API :
+ * Fausse API pour les tests du Worker et du ping de santé (php -S … api-router.php), avec l'état
+ * de FakeState (variable d'environnement FAKE_STATE). Mêmes réponses que la vraie API :
  *
  *   POST /v1/messages                     enregistre le mail, répond avec les pièces attendues
  *   POST /v1/messages/{id}/part/{partId}  enregistre une pièce si l'en-tête X-Content-SHA256 correspond
+ *   POST /v1/health                       enregistre un ping de santé
  *
  * État : api.token (jeton attendu), api.max_part_size (pièces plus grosses : « too_large »),
  * api.message_status / api.part_status (code d'erreur forcé, ou null), api.failing (ID => code
  * d'erreur forcé pour ce mail seulement), api.messages (ID => JSON reçu + « _label »), api.parts
- * (« ID/PartID » => {sha256, size}). Chaque requête est ajoutée à « requests ».
+ * (« ID/PartID » => {sha256, size}), api.health_failures (nombre de pings à refuser en 503 avant
+ * d'accepter les suivants), api.pings (pings acceptés : JSON reçu + « _label » et « _type »).
+ * Chaque requête est ajoutée à « requests ».
  */
 
 require __DIR__ . '/../Support/FakeState.php';
@@ -105,6 +108,31 @@ if ($method === 'POST' && preg_match('#^/v1/messages/([^/]+)/part/([^/]+)$#', $p
     });
 
     $reply(201, ['status' => 'stored', 'id' => $id, 'part' => $partId] + $result);
+}
+
+if ($method === 'POST' && $path === '/v1/health') {
+    $refused = $state->update(static function (array &$data): bool {
+        if (($data['api']['health_failures'] ?? 0) > 0) {
+            $data['api']['health_failures']--;
+
+            return true;
+        }
+
+        return false;
+    });
+    if ($refused) {
+        $reply(503, ['error' => 'erreur simulée']);
+    }
+
+    $ping = json_decode($body, true);
+    $state->update(static function (array &$data) use ($ping, $headers): void {
+        $data['api']['pings'][] = (is_array($ping) ? $ping : ['_body' => $ping]) + [
+            '_label' => $headers['mailpit-label'] ?? null,
+            '_type'  => $headers['content-type'] ?? null,
+        ];
+    });
+
+    $reply(200, ['status' => 'ok', 'time' => gmdate('Y-m-d\TH:i:s.000\Z')]);
 }
 
 $reply(404, ['error' => 'Not Found']);

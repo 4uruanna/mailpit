@@ -17,7 +17,7 @@ final class ConfigTest extends TestCase
     private const array VARIABLES = [
         'RELAY_API_URL', 'RELAY_API_TOKEN', 'RELAY_MAILPIT_URL', 'RELAY_MAILPIT_AUTH', 'RELAY_TIMEOUT',
         'RELAY_KEEP_UNREAD', 'RELAY_POLL_INTERVAL', 'RELAY_BATCH_SIZE', 'RELAY_TAG_DONE', 'RELAY_TAG_FAILED',
-        'RELAY_QUERY', 'RELAY_LISTEN', 'RELAY_LABEL',
+        'RELAY_QUERY', 'RELAY_LISTEN', 'RELAY_LABEL', 'RELAY_HEARTBEAT_INTERVAL',
     ];
 
     protected function setUp(): void
@@ -63,24 +63,26 @@ final class ConfigTest extends TestCase
         self::assertSame('', $config->query);
         self::assertSame('0.0.0.0:8080', $config->listen);
         self::assertNull($config->label);
+        self::assertSame(30, $config->heartbeatInterval);
         self::assertSame('!tag:relayed !tag:relay-failed', $config->pendingQuery());
     }
 
     public function testAllValues(): void
     {
         self::env([
-            'RELAY_API_URL'       => ' https://api.mondomaine.fr/ ',
-            'RELAY_MAILPIT_URL'   => 'http://127.0.0.1:8025/',
-            'RELAY_MAILPIT_AUTH'  => 'admin:mot:de:passe',
-            'RELAY_TIMEOUT'       => '5',
-            'RELAY_KEEP_UNREAD'   => 'no',
-            'RELAY_POLL_INTERVAL' => '10',
-            'RELAY_BATCH_SIZE'    => '1000',
-            'RELAY_TAG_DONE'      => 'envoye',
-            'RELAY_TAG_FAILED'    => 'refuse.api',
-            'RELAY_QUERY'         => 'after:2026-11-08',
-            'RELAY_LISTEN'        => '127.0.0.1:9000',
-            'RELAY_LABEL'         => 'mailpit-prod',
+            'RELAY_API_URL'            => ' https://api.mondomaine.fr/ ',
+            'RELAY_MAILPIT_URL'        => 'http://127.0.0.1:8025/',
+            'RELAY_MAILPIT_AUTH'       => 'admin:mot:de:passe',
+            'RELAY_TIMEOUT'            => '5',
+            'RELAY_KEEP_UNREAD'        => 'no',
+            'RELAY_POLL_INTERVAL'      => '10',
+            'RELAY_BATCH_SIZE'         => '1000',
+            'RELAY_TAG_DONE'           => 'envoye',
+            'RELAY_TAG_FAILED'         => 'refuse.api',
+            'RELAY_QUERY'              => 'after:2026-11-08',
+            'RELAY_LISTEN'             => '127.0.0.1:9000',
+            'RELAY_LABEL'              => 'mailpit-prod',
+            'RELAY_HEARTBEAT_INTERVAL' => '0',
         ]);
         $config = Config::fromEnv();
 
@@ -96,6 +98,8 @@ final class ConfigTest extends TestCase
         self::assertSame('!tag:envoye !tag:refuse.api after:2026-11-08', $config->pendingQuery());
         self::assertSame('127.0.0.1:9000', $config->listen);
         self::assertSame('mailpit-prod', $config->label);
+        self::assertSame(0, $config->heartbeatInterval, '0 : pas de ping de santé');
+        self::assertStringEndsWith(', ping de santé désactivé', $config->describe());
     }
 
     /** @return iterable<string, array{string, string}> */
@@ -136,6 +140,20 @@ final class ConfigTest extends TestCase
         self::assertStringContainsString('jeton 0123…', $description);
         self::assertStringNotContainsString(self::TOKEN, $description);
         self::assertStringNotContainsString('secret-mailpit', $description);
+        self::assertStringEndsWith(', ping de santé toutes les 30 s', $description);
+    }
+
+    public function testWithTimeoutKeepsTheRest(): void
+    {
+        self::env(['RELAY_HEARTBEAT_INTERVAL' => '15']);
+        $config = Config::fromEnv();
+        $short = $config->withTimeout(10);
+
+        self::assertSame(60, $config->timeout, 'configuration d\'origine inchangée');
+        self::assertSame(10, $short->timeout);
+        self::assertSame(15, $short->heartbeatInterval);
+        self::assertSame($config->apiUrl, $short->apiUrl);
+        self::assertSame($config->apiToken, $short->apiToken);
     }
 
     /** @return iterable<string, array{array<string, string>, string}> */
@@ -161,6 +179,8 @@ final class ConfigTest extends TestCase
         yield 'délai à zéro'                => [['RELAY_TIMEOUT' => '0'], 'RELAY_TIMEOUT doit être un entier positif'];
         yield 'délai négatif'               => [['RELAY_POLL_INTERVAL' => '-5'], 'RELAY_POLL_INTERVAL doit être un entier positif'];
         yield 'lot en texte'                => [['RELAY_BATCH_SIZE' => 'beaucoup'], 'RELAY_BATCH_SIZE doit être un entier positif'];
+        yield 'ping négatif'                => [['RELAY_HEARTBEAT_INTERVAL' => '-1'], 'RELAY_HEARTBEAT_INTERVAL doit être un entier positif ou nul'];
+        yield 'ping en texte'               => [['RELAY_HEARTBEAT_INTERVAL' => '30s'], 'RELAY_HEARTBEAT_INTERVAL doit être un entier positif ou nul'];
         yield 'booléen illisible'           => [['RELAY_KEEP_UNREAD' => 'peut-être'], 'RELAY_KEEP_UNREAD doit valoir true ou false'];
     }
 

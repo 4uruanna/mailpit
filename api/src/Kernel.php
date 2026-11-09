@@ -12,10 +12,13 @@ use App\Action\Api\ShowMessageAction;
 use App\Action\CreateMessageAction;
 use App\Action\Dashboard\MessagesController;
 use App\Action\Dashboard\SignInController;
+use App\Action\Dashboard\StatusController;
 use App\Action\Dashboard\TokensController;
+use App\Action\HealthAction;
 use App\Action\UploadPartAction;
 use App\Auth\LoginThrottle;
 use App\Dashboard\ErrorPage;
+use App\Dashboard\LatencyChart;
 use App\Dashboard\Session;
 use App\Dashboard\View;
 use App\Http\ClientIpResolver;
@@ -33,6 +36,7 @@ use App\Middleware\TokenAuthMiddleware;
 use App\Persistence\AdminRepository;
 use App\Persistence\Database;
 use App\Persistence\FileStore;
+use App\Persistence\HealthRepository;
 use App\Persistence\LoginAttemptRepository;
 use App\Persistence\Maintenance;
 use App\Persistence\MessageRepository;
@@ -87,8 +91,11 @@ final class Kernel
             $settings->maxMessages,
         );
         $upload = new UploadPartAction($messages, $files, $responseFactory, $settings->maxPartSize);
+        $healthPings = new HealthRepository($database);
+        $health = new HealthAction($healthPings, $responseFactory);
         // Nettoyage (mails trop anciens, au-delà de max_messages, fichiers orphelins) après les
         // requêtes acceptées du relais, au plus toutes les 15 minutes : aucune tâche planifiée.
+        // Le ping de santé (toutes les 30 s) le déclenche aussi, même quand aucun mail n'arrive.
         $maintenance = new MaintenanceMiddleware(new Maintenance($messages, $files, $settings->maxAgeDays, $settings->maxMessages));
 
         // ── Développeurs : jetons créés dans le Dashboard ────────────────────────────────────
@@ -105,13 +112,16 @@ final class Kernel
 
         // ── Dashboard des administrateurs ────────────────────────────────────────────────────
         $session = new Session($settings->basePath . '/v1/app', $settings->sessionLifetime);
-        $view = new View(dirname(__DIR__) . '/templates', $settings->basePath, new DateTimeZone($settings->timezone), $session, $responseFactory);
+        $timezone = new DateTimeZone($settings->timezone);
+        $view = new View(dirname(__DIR__) . '/templates', $settings->basePath, $timezone, $session, $responseFactory);
         $signIn = new SignInController(new LoginThrottle($admins, new LoginAttemptRepository($database)), $session, $view, $ipResolver);
         $messagesPage = new MessagesController($messages, $files, $session, $view);
         $tokensPage = new TokensController($tokens, $messages, $session, $view, $https);
+        $statusPage = new StatusController($healthPings, $view, new LatencyChart($timezone));
 
         //   POST   /v1/messages                     relais : le mail (JSON), puis nettoyage si c'est le moment
         //   POST   /v1/messages/{id}/part/{partId}  relais : le contenu d'une pièce jointe, puis nettoyage
+        //   POST   /v1/health                       relais : ping de santé (toutes les 30 s), puis nettoyage
         //   GET    /v1/messages                     jeton : résumés des mails de ses adresses (?address, limit, offset, page)
         //   GET    /v1/messages/{id}                jeton : un mail complet (corps, en-têtes) de ses adresses
         //   DELETE /v1/messages/{id}                jeton : supprime un mail de ses adresses
@@ -119,14 +129,15 @@ final class Kernel
         //   DELETE /v1/addresses?address=…          jeton : supprime les mails d'une de ses adresses
         //   /v1/app/…                               Dashboard (session) ; erreurs en page HTML
         $app->group('/v1', function (RouteCollectorProxy $v1) use (
-            $create, $upload, $ipFilter, $relayAuth, $maintenance,
+            $create, $upload, $health, $ipFilter, $relayAuth, $maintenance,
             $list, $show, $deleteMessage, $listAddresses, $deleteAddress, $tokenAuth, $listAuth,
-            $session, $view, $admins, $signIn, $messagesPage, $tokensPage, $https,
+            $session, $view, $admins, $signIn, $messagesPage, $tokensPage, $statusPage, $https,
         ): void {
             // Middlewares de route : le dernier ajouté s'exécute en premier (filtre IP, jeton, puis
             // la route ; le nettoyage a lieu une fois la réponse calculée).
             $v1->post('/messages', $create)->add($maintenance)->add($relayAuth)->add($ipFilter);
             $v1->post('/messages/{id}/part/{partId}', $upload)->add($maintenance)->add($relayAuth)->add($ipFilter);
+            $v1->post('/health', $health)->add($maintenance)->add($relayAuth)->add($ipFilter);
 
             $v1->get('/messages', $list)->add($listAuth);
             // Sans contrainte sur {id}, comme DELETE : l'action vérifie l'ID (404 « mail inconnu »).
@@ -136,13 +147,13 @@ final class Kernel
             $v1->get('/addresses', $listAddresses)->add($tokenAuth);
             $v1->delete('/addresses', $deleteAddress)->add($tokenAuth);
 
-            $v1->group('/app', function (RouteCollectorProxy $dashboard) use ($session, $view, $admins, $signIn, $messagesPage, $tokensPage, $https): void {
+            $v1->group('/app', function (RouteCollectorProxy $dashboard) use ($session, $view, $admins, $signIn, $messagesPage, $tokensPage, $statusPage, $https): void {
                 $dashboard->get('/signin', [$signIn, 'show']);
                 $dashboard->post('/signin', [$signIn, 'submit']);
                 // Script des pages (confirmations, sélection) : seul JavaScript autorisé par la CSP.
                 $dashboard->get('/dashboard.js', static fn (): ResponseInterface => $view->script('dashboard.js'));
 
-                $dashboard->group('', function (RouteCollectorProxy $admin) use ($view, $signIn, $messagesPage, $tokensPage): void {
+                $dashboard->group('', function (RouteCollectorProxy $admin) use ($view, $signIn, $messagesPage, $tokensPage, $statusPage): void {
                     $admin->get('', static fn (): ResponseInterface => $view->redirect('/v1/app/messages'));
                     $admin->post('/signout', [$signIn, 'signOut']);
                     $admin->get('/messages', [$messagesPage, 'index']);
@@ -157,6 +168,7 @@ final class Kernel
                     $admin->post('/tokens/{id:[0-9]+}/delete', [$tokensPage, 'delete']);
                     $admin->post('/tokens/{id:[0-9]+}/addresses', [$tokensPage, 'addAddress']);
                     $admin->post('/tokens/{id:[0-9]+}/addresses/delete', [$tokensPage, 'removeAddress']);
+                    $admin->get('/status', [$statusPage, 'index']);
                 })->add(new RequireAdminMiddleware($session, $admins, $view));
             })->add(new DashboardMiddleware($session, $view, $https));
         });

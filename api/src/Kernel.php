@@ -18,9 +18,11 @@ use App\Dashboard\Session;
 use App\Dashboard\View;
 use App\Http\ClientIpResolver;
 use App\Http\ErrorHandler;
+use App\Http\HttpsDetector;
 use App\Http\IpMatcher;
 use App\Middleware\ApiTokenMiddleware;
 use App\Middleware\DashboardMiddleware;
+use App\Middleware\ForceHttpsMiddleware;
 use App\Middleware\IpFilterMiddleware;
 use App\Middleware\RequireAdminMiddleware;
 use App\Middleware\TokenAuthMiddleware;
@@ -63,6 +65,7 @@ final class Kernel
 
         $ipResolver = new ClientIpResolver(new IpMatcher($settings->trustedProxies), $settings->proxyHeader);
         $relayIps = new IpMatcher($settings->allowedIps);
+        $https = new HttpsDetector($ipResolver);
 
         // ── Relais : seul autorisé à envoyer des mails ───────────────────────────────────────
         // Filtre IP (403) puis jeton du relais (401), avant toute lecture du corps.
@@ -94,7 +97,7 @@ final class Kernel
         $view = new View(dirname(__DIR__) . '/templates', $settings->basePath, new DateTimeZone($settings->timezone), $session, $responseFactory);
         $signIn = new SignInController(new LoginThrottle($admins, new LoginAttemptRepository($database)), $session, $view, $ipResolver);
         $messagesPage = new MessagesController($messages, $files, $session, $view);
-        $tokensPage = new TokensController($tokens, $messages, $session, $view);
+        $tokensPage = new TokensController($tokens, $messages, $session, $view, $https);
 
         //   POST   /v1/messages                     relais : le mail (JSON)
         //   POST   /v1/messages/{id}/part/{partId}  relais : le contenu d'une pièce jointe
@@ -106,7 +109,7 @@ final class Kernel
         $app->group('/v1', function (RouteCollectorProxy $v1) use (
             $create, $upload, $ipFilter, $relayAuth,
             $list, $deleteMessage, $listAddresses, $deleteAddress, $tokenAuth, $listAuth,
-            $session, $view, $admins, $signIn, $messagesPage, $tokensPage,
+            $session, $view, $admins, $signIn, $messagesPage, $tokensPage, $https,
         ): void {
             // Middlewares de route : le dernier ajouté s'exécute en premier (filtre IP d'abord).
             $v1->post('/messages', $create)->add($relayAuth)->add($ipFilter);
@@ -117,7 +120,7 @@ final class Kernel
             $v1->get('/addresses', $listAddresses)->add($tokenAuth);
             $v1->delete('/addresses', $deleteAddress)->add($tokenAuth);
 
-            $v1->group('/app', function (RouteCollectorProxy $dashboard) use ($session, $view, $admins, $signIn, $messagesPage, $tokensPage): void {
+            $v1->group('/app', function (RouteCollectorProxy $dashboard) use ($session, $view, $admins, $signIn, $messagesPage, $tokensPage, $https): void {
                 $dashboard->get('/signin', [$signIn, 'show']);
                 $dashboard->post('/signin', [$signIn, 'submit']);
                 // Script des pages (confirmations, sélection) : seul JavaScript autorisé par la CSP.
@@ -139,14 +142,20 @@ final class Kernel
                     $admin->post('/tokens/{id:[0-9]+}/addresses', [$tokensPage, 'addAddress']);
                     $admin->post('/tokens/{id:[0-9]+}/addresses/delete', [$tokensPage, 'removeAddress']);
                 })->add(new RequireAdminMiddleware($session, $admins, $view));
-            })->add(new DashboardMiddleware($session, $view));
+            })->add(new DashboardMiddleware($session, $view, $https));
         });
 
-        // Ajouté en dernier = exécuté en premier : attrape toutes les erreurs.
+        // Attrape toutes les erreurs des routes et des middlewares ajoutés avant lui.
         $errorHandler = new ErrorHandler($app->getCallableResolver(), $responseFactory);
         $errorHandler->forceContentType('application/json');
         $errorMiddleware = $app->addErrorMiddleware($settings->debug, true, true);
         $errorMiddleware->setDefaultErrorHandler($errorHandler);
+
+        // HTTPS obligatoire. Ajouté après la gestion des erreurs, donc exécuté avant elle et avant le
+        // routage : une URL inconnue est aussi redirigée, et les pages d'erreur reçoivent l'en-tête HSTS.
+        if ($settings->forceHttps) {
+            $app->add(new ForceHttpsMiddleware($https, $ipResolver, $responseFactory));
+        }
 
         return $app;
     }

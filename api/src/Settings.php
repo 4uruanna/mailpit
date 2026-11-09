@@ -37,6 +37,8 @@ final readonly class Settings
         public int $sessionLifetime = 7200,
         /** Dashboard : fuseau horaire d'affichage des dates. */
         public string $timezone = 'Europe/Paris',
+        /** HTTPS obligatoire (redirection, 403, HSTS) : false seulement en développement local. */
+        public bool $forceHttps = true,
     ) {
     }
 
@@ -81,6 +83,11 @@ final readonly class Settings
             throw new InvalidArgumentException(sprintf('« app.timezone » : fuseau horaire inconnu « %s »', $timezone));
         }
 
+        $forceHttps = $config['force_https'] ?? true;
+        if (!is_bool($forceHttps)) {
+            throw new InvalidArgumentException('« force_https » doit valoir true ou false');
+        }
+
         return new self(
             debug: (bool) ($config['debug'] ?? false),
             basePath: $basePath,
@@ -102,6 +109,7 @@ final readonly class Settings
             proxyHeader: (string) ($proxy['header'] ?? 'X-Forwarded-For'),
             sessionLifetime: $sessionLifetime,
             timezone: $timezone,
+            forceHttps: $forceHttps,
         );
     }
 

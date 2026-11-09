@@ -7,6 +7,7 @@ namespace App\Tests\Http;
 use App\Tests\Support\AppTestCase;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 use Psr\Http\Message\ResponseInterface;
+use Slim\Psr7\Factory\ServerRequestFactory;
 
 /**
  * Dashboard (/v1/app/…) : session PHP (session_start), un processus par test pour que chaque
@@ -154,6 +155,55 @@ final class DashboardTest extends AppTestCase
         self::assertSame(303, $response->getStatusCode());
         self::assertMatchesRegularExpression('#^/v1/app/tokens/\d+$#', $response->getHeaderLine('Location'));
         self::assertSame('Projet A', $this->scalar('SELECT name FROM mailpit_tokens'));
+    }
+
+    public function testSessionCookieIsSecureInHttps(): void
+    {
+        self::assertSame(200, $this->request('GET', '/v1/app/signin', ip: self::OTHER_IP)->getStatusCode());
+
+        self::assertTrue(session_get_cookie_params()['secure']);
+    }
+
+    public function testSessionCookieIsSecureBehindATrustedProxy(): void
+    {
+        // Le proxy parle en http:// à l'hébergement, le client est en HTTPS : même détection que force_https.
+        $config = $this->config();
+        $config['proxy'] = ['trusted_proxies' => ['10.0.0.1']];
+        $this->useConfig($config);
+
+        $response = $this->request('GET', '/v1/app/signin', ['X-Forwarded-Proto' => 'https'], ip: '10.0.0.1', https: false);
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertTrue(session_get_cookie_params()['secure']);
+    }
+
+    public function testSessionCookieIsNotSecureInClearWhenHttpsIsNotForced(): void
+    {
+        // Développement local (force_https = false) : le cookie doit rester utilisable en http://.
+        $this->useConfig(['force_https' => false] + $this->config());
+
+        self::assertSame(200, $this->request('GET', '/v1/app/signin', ip: self::OTHER_IP, https: false)->getStatusCode());
+        self::assertFalse(session_get_cookie_params()['secure']);
+    }
+
+    public function testTokenExampleIsInHttpsBehindTheOvhFrontEnd(): void
+    {
+        $this->signIn();
+        $csrf = self::csrf($this->request('GET', '/v1/app/tokens', ip: self::OTHER_IP));
+        $location = $this->request('POST', '/v1/app/tokens', ip: self::OTHER_IP, form: ['_csrf' => $csrf, 'name' => 'Projet A'])
+            ->getHeaderLine('Location');
+
+        // Frontal OVH : port 443 sans HTTPS=on, l'URL vue par PHP est donc « http://api.test:443 ».
+        $request = new ServerRequestFactory()->createServerRequest('GET', 'http://api.test:443' . $location, [
+            'REMOTE_ADDR' => self::OTHER_IP,
+            'SERVER_PORT' => '443',
+        ]);
+        $response = $this->handle($request);
+
+        self::assertSame(200, $response->getStatusCode());
+        $body = (string) $response->getBody();
+        self::assertStringContainsString('https://api.test/v1/messages?address=', $body);
+        self::assertStringNotContainsString('http://api.test', $body);
     }
 
     public function testDeletedAdminIsSignedOut(): void

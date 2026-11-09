@@ -78,6 +78,9 @@ abstract class AppTestCase extends DatabaseTestCase
     }
 
     /**
+     * Requête HTTPS par défaut, comme en production (force_https) : HTTPS=on et port 443,
+     * ce que fixe Apache. $https = false : requête en clair, http:// sur le port 80.
+     *
      * @param array<string, string> $headers
      * @param array<string, mixed>|null $form champs d'un formulaire (corps déjà analysé)
      */
@@ -88,8 +91,12 @@ abstract class AppTestCase extends DatabaseTestCase
         ?string $body = null,
         string $ip = self::RELAY_IP,
         ?array $form = null,
+        bool $https = true,
     ): ResponseInterface {
-        $request = new ServerRequestFactory()->createServerRequest($method, 'https://api.test' . $path, ['REMOTE_ADDR' => $ip]);
+        $server = $https
+            ? ['REMOTE_ADDR' => $ip, 'HTTPS' => 'on', 'SERVER_PORT' => '443']
+            : ['REMOTE_ADDR' => $ip, 'SERVER_PORT' => '80'];
+        $request = new ServerRequestFactory()->createServerRequest($method, ($https ? 'https' : 'http') . '://api.test' . $path, $server);
         parse_str((string) parse_url($path, PHP_URL_QUERY), $query);
         $request = $request->withQueryParams($query);
         foreach ($headers as $name => $value) {

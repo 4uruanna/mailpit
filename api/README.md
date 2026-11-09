@@ -29,11 +29,13 @@ Le mail complet est envoyé par le [relais](../relay/README.md), installé sur l
 
 > ⚠️ Le relais est le **seul** moyen d'alimenter l'API. Le webhook **direct** de Mailpit (sans relais) est refusé (`401`) : Mailpit ne sait pas ajouter d'en-tête, et l'API n'accepte le jeton que dans l'en-tête `Authorization`, jamais dans l'URL, où il apparaîtrait dans les logs d'accès de l'hébergement. Voir l'[étape 5](#5-configurer-mailpit).
 
+> 🔒 Tout passe en **HTTPS** : une page demandée en `http://` est redirigée vers `https://`, et toute autre requête en clair (`POST`, `DELETE`…) est refusée (`403`). Voir [HTTPS obligatoire](#https-obligatoire).
+
 ## Arborescence
 
 ```
 api/
-├── .htaccess            # redirige tout vers public/ et bloque les fichiers sensibles
+├── .htaccess            # redirige vers HTTPS, puis tout vers public/, et bloque les fichiers sensibles
 ├── .ovhconfig           # version de PHP sur l'hébergement OVH
 ├── config.example.php   # modèle de configuration → à copier en config.php
 ├── composer.json / composer.lock
@@ -41,7 +43,7 @@ api/
 ├── bin/
 │   └── create-admin.php # prépare la requête SQL qui crée un administrateur
 ├── public/
-│   ├── .htaccess        # contrôleur frontal Slim
+│   ├── .htaccess        # HTTPS (redirection, HSTS) et contrôleur frontal Slim
 │   └── index.php
 ├── sql/
 │   ├── schema.sql       # tables MySQL, à importer une fois
@@ -66,6 +68,8 @@ Elles exigent le jeton du relais, dans l'en-tête `Authorization: Bearer <jeton>
 | `POST` | `/v1/messages/{id}/part/{partId}` | Corps : le contenu brut de la pièce (`Content-Type: application/octet-stream`), avec l'en-tête `X-Content-SHA256` (empreinte SHA-256 en hexadécimal).<br>`201 {"status":"stored", "complete":true, "missing":[], …}` : pièce enregistrée<br>`200 {"status":"already-stored", …}` : déjà reçue<br>`404` message ou pièce inconnus · `409` pièce `too_large`, ou déjà reçue avec un autre contenu · `413` au-delà de la limite · `415` mauvais Content-Type · `422` empreinte absente ou différente |
 
 Pour les deux : `403` IP non autorisée (vérifiée en premier) · `401` jeton absent ou faux · `500` erreur serveur (base injoignable…).
+
+Pour toutes les routes (relais, développeurs, Dashboard) : en `http://`, `301` vers la même URL en `https://` pour `GET` et `HEAD`, `403 {"error":"HTTPS obligatoire : renvoyez la requête en https://"}` pour les autres méthodes, avant toute autre vérification. Voir [HTTPS obligatoire](#https-obligatoire).
 
 ### Développeurs
 
@@ -147,6 +151,7 @@ cp config.example.php config.php
 | `webhook.max_messages` | nombre de mails gardés, 1000 par défaut (comme `MP_MAX_MESSAGES` côté Mailpit). `0` = sans limite |
 | `app.session_lifetime` | Dashboard : déconnexion après ce nombre de secondes d'inactivité (2 h par défaut) |
 | `app.timezone` | Dashboard : fuseau horaire d'affichage des dates (`Europe/Paris` par défaut) |
+| `force_https` | `true` (défaut) : HTTPS obligatoire. `false` **uniquement** pour un essai en local sans HTTPS. Voir [HTTPS obligatoire](#https-obligatoire) |
 | `debug` | `false` en production |
 
 Générez le jeton une seule fois, puis copiez-le aux deux endroits :
@@ -212,6 +217,8 @@ Espace client OVH → **Hébergements** → onglet **Multisite** → **Ajouter u
   `api` fonctionne aussi : le `.htaccess` racine redirige vers `public/` et bloque le reste.
 - Cochez **SSL** et attendez que le certificat soit généré. Le relais appellera l'API en HTTPS.
 
+> ⚠️ L'API **impose HTTPS** : toute page demandée en `http://` est redirigée vers `https://`. Activez donc le certificat SSL **avant** les premiers essais : sans lui, le navigateur et `curl` affichent une erreur de certificat après la redirection. Vérifiez dans l'onglet **Multisite** que la colonne **SSL** indique **Activé** pour `api.amnesic.dev` (sinon : **…** → **Modifier le domaine** → cochez **SSL**, puis onglet **Informations générales** → **Certificat SSL** → **Regénérer le certificat SSL**). Comptez jusqu'à quelques heures.
+
 **Version de PHP** : le fichier `.ovhconfig` demande PHP 8.5. OVH le lit à la racine de l'hébergement ou à la racine du dossier du multisite. Si vous choisissez `api/public` comme dossier racine, **déplacez `.ovhconfig` dans `public/`**. Si OVH ne propose pas encore la 8.5, mettez `8.4` (le minimum de l'API). Vérifiez la version active dans l'onglet **Informations générales** de l'hébergement.
 
 ### 5. Configurer Mailpit
@@ -275,6 +282,19 @@ curl -s 'https://api.amnesic.dev/v1/messages?address=essai@test.mondomaine.fr' -
 
 **Fichiers protégés** : `https://api.amnesic.dev/config.php`, `/vendor/autoload.php`, `/.ovhconfig`… doivent tous renvoyer `403` ou `404`.
 
+**HTTPS obligatoire** :
+
+```bash
+# Page en http:// : 301 vers https://
+curl -4 -s -o /dev/null -w '%{http_code} %{redirect_url}\n' 'http://api.amnesic.dev/v1/app/signin'
+# Requête POST en http:// : 403
+curl -4 -s -w '\n%{http_code}\n' -X POST 'http://api.amnesic.dev/v1/messages'
+# En HTTPS : en-tête Strict-Transport-Security
+curl -4 -s -D - -o /dev/null 'https://api.amnesic.dev/v1/app/signin' | grep -i strict-transport
+```
+
+Attendu : `301 https://api.amnesic.dev/v1/app/signin`, puis `{"error":"HTTPS obligatoire : renvoyez la requête en https://"}` et `403`, puis `Strict-Transport-Security: max-age=31536000`.
+
 ---
 
 ## Tests automatisés
@@ -283,9 +303,9 @@ Les tests **PHPUnit** vérifient le code sur votre ordinateur, sans rien déploy
 
 | Suite | Dossier | Ce qui est testé | Base MySQL |
 |---|---|---|---|
-| `unit` | `tests/Unit/` | classes sans base : filtre IP (`IpMatcher`, `ClientIpResolver`), adresses, validation du JSON des mails et des pièces (chaque erreur `422`), configuration (`Settings`), filtres du Dashboard, jetons (`ApiScope`, `Authorization: Bearer`, jeton du relais refusé dans l'URL et avertissement sans sa valeur), adresse comptée par la limite de connexion (`LoginThrottle::ipKey`) | non |
+| `unit` | `tests/Unit/` | classes sans base : filtre IP (`IpMatcher`, `ClientIpResolver`), adresses, validation du JSON des mails et des pièces (chaque erreur `422`), configuration (`Settings`), HTTPS (`HttpsDetector` : `HTTPS`, port 443, `X-Forwarded-Proto` d'un proxy de confiance ; `ForceHttpsMiddleware` : `301`, `403`, HSTS), filtres du Dashboard, jetons (`ApiScope`, `Authorization: Bearer`, jeton du relais refusé dans l'URL et avertissement sans sa valeur), adresse comptée par la limite de connexion (`LoginThrottle::ipKey`) | non |
 | `integration` | `tests/Integration/` | accès à la base : mails, pièces, purge, liste par adresse, suppression, jetons développeurs, limite de connexion au Dashboard (par identifiant et adresse, plafond par adresse, IPv6 par `/64`) | oui |
-| `http` | `tests/Http/` | l'application complète (`Kernel::create`) avec de fausses requêtes : routes du relais (`403`, `401`, `401` avec `?token=…`, `415`, `400`, `413`, `422`, `201`, `200`), envoi des pièces jusqu'à `"complete": true`, routes des développeurs, Dashboard (redirection vers la connexion, refus sans jeton anti-CSRF, messages de blocage) | oui |
+| `http` | `tests/Http/` | l'application complète (`Kernel::create`) avec de fausses requêtes : routes du relais (`403`, `401`, `401` avec `?token=…`, `415`, `400`, `413`, `422`, `201`, `200`), envoi des pièces jusqu'à `"complete": true`, routes des développeurs, Dashboard (redirection vers la connexion, refus sans jeton anti-CSRF, messages de blocage, cookie de session `Secure`, exemple `curl` de la page du jeton en `https://` derrière le frontal OVH), requêtes en clair (`301`, `403` sans rien enregistrer, proxy de confiance, `force_https` désactivé) | oui |
 
 **Prérequis** : PHP 8.4 minimum avec `pdo_mysql` et `mbstring`, Composer, et une base MySQL **de test** (8.4 comme l'hébergement ; 8.0.19 minimum).
 
@@ -340,6 +360,9 @@ Les pièces jointes des tests sont écrites dans un dossier temporaire, supprim�
 | `401` | Jeton absent ou différent de `webhook.token` (`[auth] jeton absent` ou `[auth] jeton invalide` dans `var/log/api.log`). Vérifiez `RELAY_API_TOKEN` (relais) |
 | `401` avec `[auth] jeton dans l'URL (?token=…), ignoré` dans le log | Le jeton a été passé dans l'URL : il n'est accepté que dans l'en-tête `Authorization`. Souvent une ancienne configuration de Mailpit (`MP_WEBHOOK_URL=…/v1/messages?token=…`) : envoyez le webhook au relais ([étape 5](#5-configurer-mailpit)). Si le log dit `jeton du relais dans l'URL`, c'était le vrai jeton : changez-le |
 | `401` avec `jeton absent` alors que le relais envoie bien le jeton | L'en-tête `Authorization` n'arrive pas jusqu'à PHP : vérifiez que les `.htaccess` (racine et `public/`) ont bien été envoyés, à jour |
+| `403` avec `{"error":"HTTPS obligatoire : renvoyez la requête en https://"}` | La requête est partie en `http://` (`[https] requête en clair refusée …` dans `var/log/api.log`) : mettez `https://` dans l'URL (`RELAY_API_URL` pour le relais). Si le log ajoute `en-tête Authorization envoyé en clair`, le jeton a circulé sans chiffrement : changez-le |
+| Erreur de certificat après la redirection vers `https://` | Certificat SSL pas encore généré ou pas activé pour ce domaine : voir l'[étape 4](#4-brancher-le-domaine-apiamnesicdev) |
+| « Trop de redirections » (`ERR_TOO_MANY_REDIRECTS`) | Un proxy ou un CDN joint l'hébergement en `http://` sans être listé dans `proxy.trusted_proxies` : voir [Derrière un proxy ou un CDN](#derrière-un-proxy-ou-un-cdn) |
 | `500` avec `{"error":"Erreur de configuration du serveur"}` | `vendor/` ou `config.php` absent, ou `config.php` invalide (détail dans `var/log/api.log`). Souvent : `webhook.token` vide ou trop court (**obligatoire**, 32 caractères minimum) |
 | `500` avec `Slim Application Error` | Souvent la base : identifiants faux ou table absente. Détail dans `var/log/api.log` |
 | `404` sur `/v1/messages` | `.htaccess` non envoyés (fichiers cachés), ou mauvais dossier racine du multisite. Si l'API est dans un sous-dossier de l'URL, renseignez `base_path` |
@@ -421,7 +444,7 @@ Une suppression efface le mail de la base (pièces jointes et destinataires comp
 
 > ⚠️ **Le jeton n'est affiché qu'une fois**, juste après sa création. Seule son empreinte SHA-256 est gardée en base : s'il est perdu, supprimez-le et créez-en un autre.
 
-**Sécurité.** Les pages n'exécutent qu'un seul script, `dashboard.js`, servi par l'API (CSP `script-src 'self'`) : il affiche les confirmations et gère les cases à cocher. Connexion limitée, sur 30 minutes, à **3 échecs par identifiant depuis une même adresse** et à **10 échecs par adresse**, tous identifiants confondus. Au-delà, la connexion est refusée (`429`, en-tête `Retry-After`) jusqu'à 30 minutes après le plus ancien des échecs comptés, même avec le bon mot de passe. Le blocage d'un identifiant ne vaut que pour l'adresse qui a échoué : quelqu'un d'autre ne peut pas bloquer votre compte. Une IPv4 est comptée à l'adresse exacte, une IPv6 par préfixe `/64` (sinon il suffirait de changer d'adresse dans son `/64`). Une connexion réussie remet à zéro le compteur de cet identifiant depuis cette adresse. Un identifiant inexistant est traité de la même façon, pour ne pas révéler quels comptes existent. Derrière un proxy, l'adresse est celle du client, déterminée comme pour le filtre IP (`proxy.trusted_proxies`). Les autres protections : mots de passe hachés (`password_hash`), cookie de session `HttpOnly`, `SameSite=Strict` et `Secure` en HTTPS, limité au chemin `/v1/app`, jeton anti-CSRF dans chaque formulaire, déconnexion après 2 h d'inactivité (`app.session_lifetime`), pages jamais mises en cache ni affichables dans une iframe.
+**Sécurité.** Les pages n'exécutent qu'un seul script, `dashboard.js`, servi par l'API (CSP `script-src 'self'`) : il affiche les confirmations et gère les cases à cocher. Connexion limitée, sur 30 minutes, à **3 échecs par identifiant depuis une même adresse** et à **10 échecs par adresse**, tous identifiants confondus. Au-delà, la connexion est refusée (`429`, en-tête `Retry-After`) jusqu'à 30 minutes après le plus ancien des échecs comptés, même avec le bon mot de passe. Le blocage d'un identifiant ne vaut que pour l'adresse qui a échoué : quelqu'un d'autre ne peut pas bloquer votre compte. Une IPv4 est comptée à l'adresse exacte, une IPv6 par préfixe `/64` (sinon il suffirait de changer d'adresse dans son `/64`). Une connexion réussie remet à zéro le compteur de cet identifiant depuis cette adresse. Un identifiant inexistant est traité de la même façon, pour ne pas révéler quels comptes existent. Derrière un proxy, l'adresse est celle du client, déterminée comme pour le filtre IP (`proxy.trusted_proxies`). Les autres protections : mots de passe hachés (`password_hash`), HTTPS obligatoire ([voir plus bas](#https-obligatoire)), cookie de session `HttpOnly`, `SameSite=Strict` et `Secure`, limité au chemin `/v1/app`, jeton anti-CSRF dans chaque formulaire, déconnexion après 2 h d'inactivité (`app.session_lifetime`), pages jamais mises en cache ni affichables dans une iframe.
 
 Le Dashboard est accessible depuis **n'importe quelle IP** : `webhook.allowed_ips` ne concerne que le relais.
 
@@ -529,6 +552,27 @@ Gardez la même valeur que `MP_MAX_MESSAGES` côté Mailpit ([Partie 1, étape 3
 
 Pour supprimer un mail à la main, supprimez sa ligne dans `mailpit_messages` (ses lignes de `mailpit_parts` et `mailpit_message_recipients` partent avec elle) et son dossier `var/messages/<mailpit_id>/` par FTP. Plus simple : un jeton développeur associé à son adresse peut le supprimer, base et fichiers (`DELETE /v1/messages/{id}`).
 
+## HTTPS obligatoire
+
+Le jeton du relais, les jetons développeurs, le mot de passe et le cookie du Dashboard ne circulent jamais en clair. Deux protections, l'une derrière l'autre :
+
+| Où | Requête en `http://` | Réponse en HTTPS |
+|---|---|---|
+| `.htaccess` (racine **et** `public/`, pour les deux dossiers racines possibles) | `GET` / `HEAD` : `301` vers la même URL en `https://`. Les autres méthodes passent à PHP | `Strict-Transport-Security: max-age=31536000` (`mod_headers`) |
+| PHP (`ForceHttpsMiddleware`), même si `mod_rewrite` est absent | `GET` / `HEAD` : `301`. Autres méthodes : `403` JSON, **sans lire le corps** (rediriger un `POST` le ferait renvoyer en clair, ou changer en `GET`) | Même en-tête HSTS |
+
+- **Détection.** Une requête est en HTTPS si Apache indique `HTTPS=on` ou le port `443`. Chez OVH, le port est le signe fiable (méthode recommandée par OVH : `%{SERVER_PORT}` dans le `.htaccess`), `HTTPS` n'étant pas toujours fixé derrière leur frontal. Derrière un [proxy de confiance](#derrière-un-proxy-ou-un-cdn), c'est l'en-tête `X-Forwarded-Proto` qui décide.
+- **HSTS.** Après une première visite en HTTPS, le navigateur n'essaie plus `http://` pendant un an, même si on tape l'adresse sans `https://`. Pas de `preload` : l'inscription dans les navigateurs serait difficile à annuler.
+- **Journal.** Une requête refusée est écrite dans `var/log/api.log` (`[https] requête en clair refusée depuis « IP » : POST /v1/messages`). Si elle portait un en-tête `Authorization` (`GET` redirigé compris), le log l'indique, sans la valeur : ce jeton a circulé sans chiffrement, changez-le.
+- **Cookie de session.** Le cookie du Dashboard est marqué `Secure` d'après la même détection : il n'est jamais envoyé en clair. L'exemple `curl` de la page d'un jeton suit la même détection : il est en `https://`, même derrière le frontal OVH.
+- **Relais.** `RELAY_API_URL` doit commencer par `https://` : le relais refuse de démarrer sinon (`http://` n'est accepté que vers `localhost`, pour des tests).
+
+> ⚠️ Activez le certificat SSL de l'hébergement **avant** : voir l'[étape 4](#4-brancher-le-domaine-apiamnesicdev).
+
+> 💡 **Développement local** (`php -S`, `http://localhost:8080`) : mettez `'force_https' => false` dans `config.php`. Plus de redirection, de `403` ni d'en-tête HSTS côté PHP, et le cookie du Dashboard n'est plus `Secure` en `http://`. Les `.htaccess`, eux, redirigent toujours (`php -S` ne les lit pas). Ne le faites jamais sur l'hébergement.
+
 ## Derrière un proxy ou un CDN
 
 Sur un hébergement OVH sans option CDN, l'IP du client est dans `REMOTE_ADDR` : laissez `proxy.trusted_proxies` vide. Cette IP sert au filtre du relais et à la limitation des connexions au Dashboard (par adresse), et apparaît dans leur journal. Si vous activez un CDN devant l'API, listez ses adresses dans `proxy.trusted_proxies`. L'IP réelle sera alors lue dans `X-Forwarded-For`, mais **uniquement** pour les requêtes qui viennent de ces adresses. Sans cette précaution, n'importe qui pourrait envoyer un faux en-tête pour se faire passer pour le serveur Mailpit.
+
+Il en va de même pour le protocole : l'en-tête `X-Forwarded-Proto` (`https` ou `http`, la dernière valeur s'il y en a plusieurs) n'est lu que pour ces adresses. Un CDN qui joint l'hébergement en `http://` **doit** donc être listé, sinon chaque page est redirigée vers `https://` à l'infini (« Trop de redirections »). Le `.htaccess` laisse passer à PHP une requête qui annonce `X-Forwarded-Proto: https` : c'est PHP qui vérifie qu'elle vient bien d'un proxy de confiance.

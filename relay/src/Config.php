@@ -20,7 +20,7 @@ final readonly class Config
         public string $mailpitUrl,
         /** Identifiants de MP_UI_AUTH (« utilisateur:motdepasse »), null si pas d'authentification. */
         public ?string $mailpitAuth,
-        /** Adresse de base de l'API, sans « / » final (ex. https://api.mondomaine.fr). */
+        /** Adresse de base de l'API, sans « / » final (ex. https://api.mondomaine.fr) ; http:// seulement en local. */
         public string $apiUrl,
         /** Jeton partagé avec l'API (webhook.token dans son config.php). */
         public string $apiToken,
@@ -53,6 +53,13 @@ final readonly class Config
         }
         if (parse_url($api, PHP_URL_QUERY) !== null || parse_url($api, PHP_URL_FRAGMENT) !== null) {
             throw new InvalidArgumentException('RELAY_API_URL ne doit pas contenir de « ?… » : le jeton va dans RELAY_API_TOKEN');
+        }
+        // Le jeton et les mails ne circulent jamais en clair : http:// seulement vers cette machine (tests).
+        if (strncasecmp($api, 'https://', 8) !== 0 && !self::isLocalHost((string) parse_url($api, PHP_URL_HOST))) {
+            throw new InvalidArgumentException(
+                'RELAY_API_URL doit commencer par https:// : le jeton et les mails ne doivent pas circuler en clair'
+                . ' (http:// n\'est accepté que vers localhost, 127.0.0.1 ou ::1, pour des tests)',
+            );
         }
 
         $token = self::env('RELAY_API_TOKEN');
@@ -114,6 +121,12 @@ final readonly class Config
             $this->pendingQuery(),
             $this->pollInterval,
         );
+    }
+
+    /** Hôte local, seul accepté en http:// pour RELAY_API_URL : localhost, 127.0.0.1 ou ::1. */
+    private static function isLocalHost(string $host): bool
+    {
+        return in_array(strtolower(trim($host, '[]')), ['localhost', '127.0.0.1', '::1'], true);
     }
 
     private static function env(string $name): ?string

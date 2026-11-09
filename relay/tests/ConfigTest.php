@@ -98,6 +98,25 @@ final class ConfigTest extends TestCase
         self::assertSame('mailpit-prod', $config->label);
     }
 
+    /** @return iterable<string, array{string, string}> */
+    public static function apiUrls(): iterable
+    {
+        yield 'https'                 => ['https://api.mondomaine.fr', 'https://api.mondomaine.fr'];
+        yield 'HTTPS en majuscules'   => ['HTTPS://api.mondomaine.fr/', 'HTTPS://api.mondomaine.fr'];
+        yield 'http vers localhost'   => ['http://localhost:8080', 'http://localhost:8080'];
+        yield 'http vers LOCALHOST'   => ['http://LOCALHOST:8080/', 'http://LOCALHOST:8080'];
+        yield 'http vers 127.0.0.1'   => ['http://127.0.0.1:8080', 'http://127.0.0.1:8080'];
+        yield 'http vers ::1'         => ['http://[::1]:8080', 'http://[::1]:8080'];
+    }
+
+    #[DataProvider('apiUrls')]
+    public function testApiUrl(string $url, string $expected): void
+    {
+        self::env(['RELAY_API_URL' => $url]);
+
+        self::assertSame($expected, Config::fromEnv()->apiUrl);
+    }
+
     public function testBlankValuesUseDefaults(): void
     {
         self::env(['RELAY_TIMEOUT' => '  ', 'RELAY_LABEL' => '', 'RELAY_MAILPIT_AUTH' => ' ']);
@@ -127,6 +146,10 @@ final class ConfigTest extends TestCase
         yield 'URL de l\'API en ftp'        => [['RELAY_API_URL' => 'ftp://api.mondomaine.fr'], 'RELAY_API_URL manquante ou invalide'];
         yield 'jeton dans l\'URL'           => [['RELAY_API_URL' => 'https://api.mondomaine.fr/v1/messages?token=abc'], 'RELAY_API_URL ne doit pas contenir de « ?… »'];
         yield 'fragment dans l\'URL'        => [['RELAY_API_URL' => 'https://api.mondomaine.fr/#x'], 'RELAY_API_URL ne doit pas contenir de « ?… »'];
+        yield 'API en http://'              => [['RELAY_API_URL' => 'http://api.mondomaine.fr'], 'RELAY_API_URL doit commencer par https://'];
+        yield 'API en http:// sur une IP'   => [['RELAY_API_URL' => 'http://203.0.113.10:8080'], 'RELAY_API_URL doit commencer par https://'];
+        yield 'faux localhost'              => [['RELAY_API_URL' => 'http://localhost.mondomaine.fr'], 'RELAY_API_URL doit commencer par https://'];
+        yield 'autre adresse de boucle'     => [['RELAY_API_URL' => 'http://127.0.0.2:8080'], 'RELAY_API_URL doit commencer par https://'];
         yield 'jeton absent'                => [['RELAY_API_TOKEN' => ''], 'RELAY_API_TOKEN manquant ou trop court'];
         yield 'jeton trop court'            => [['RELAY_API_TOKEN' => str_repeat('a', 31)], 'RELAY_API_TOKEN manquant ou trop court'];
         yield 'jeton avec espace'           => [['RELAY_API_TOKEN' => str_repeat('a', 20) . ' ' . str_repeat('b', 20)], '(32 caractères minimum, sans espace)'];

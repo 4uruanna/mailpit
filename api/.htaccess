@@ -24,6 +24,16 @@ RedirectMatch 404 (^|/)(vendor|src|sql|var|bin|templates|tests)(/|$)
 <IfModule mod_rewrite.c>
     RewriteEngine On
 
+    # HTTPS obligatoire : une page demandée en http:// est redirigée vers https:// (301).
+    # Même règle que public/.htaccess (voir ses commentaires) : le port 80 est le signe fiable
+    # chez OVH ; POST, DELETE… et X-Forwarded-Proto: https sont laissés à PHP.
+    RewriteCond %{REQUEST_METHOD} ^(GET|HEAD)$
+    RewriteCond %{HTTP:X-Forwarded-Proto} !https [NC]
+    RewriteCond %{SERVER_PORT} =80 [OR]
+    RewriteCond %{HTTPS} !=on
+    RewriteCond %{SERVER_PORT} !=443
+    RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L,NE]
+
     # Transmet l'en-tête « Authorization: Bearer … » du relais à PHP (voir public/.htaccess).
     RewriteCond %{HTTP:Authorization} .
     RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]

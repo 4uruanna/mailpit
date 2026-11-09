@@ -44,4 +44,13 @@ final readonly class ClientIpResolver
 
         return $remoteAddr;
     }
+
+    /**
+     * La requête arrive-t-elle directement d'un proxy de confiance (REMOTE_ADDR) ?
+     * Seuls ces proxys peuvent fixer les en-têtes X-Forwarded-* lus par l'API.
+     */
+    public function fromTrustedProxy(ServerRequestInterface $request): bool
+    {
+        return $this->trustedProxies->matches((string) ($request->getServerParams()['REMOTE_ADDR'] ?? ''));
+    }
 }

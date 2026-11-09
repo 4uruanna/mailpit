@@ -123,6 +123,17 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST https://api.mondomaine.fr/v1/me
 
 > ℹ️ Le filtre IP ne protège que les routes du **relais** (envoi des mails, `POST`). Les routes des jetons développeurs (`GET /v1/messages`, `/v1/addresses`…) et le Dashboard (`/v1/app/…`) sont ouverts à toutes les IP : sans jeton, `GET /v1/messages` répond donc `401`, et non `403`.
 
+Les erreurs du Dashboard sont des pages HTML, celles de l'API restent en JSON :
+
+```bash
+curl -s -o /dev/null -w '%{http_code} %{content_type}\n' https://api.mondomaine.fr/v1/app/inconnue
+curl -s -o /dev/null -w '%{http_code} %{content_type}\n' https://api.mondomaine.fr/v1/inconnue
+```
+
+✅ Attendu : `404 text/html; charset=utf-8`, puis `404 application/json`.
+
+❌ `404 application/json` sur la première ligne : `src/` ou `templates/` sont d'une version précédente (renvoyez-les en FTP).
+
 ### Étape 1.4 — 🖥️ Serveur : les fichiers sensibles sont inaccessibles
 
 Faites ce test **depuis le serveur Mailpit** (il fonctionne aussi depuis votre ordinateur, le filtre IP ne protégeant que les routes du relais). On vérifie que les fichiers sont **vraiment** protégés : un fichier qu'Apache servirait directement, sans passer par PHP, répondrait `200`.

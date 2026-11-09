@@ -49,6 +49,22 @@ final class Session
         $_SESSION['last_activity'] = $now;
     }
 
+    /** Session démarrée pour cette requête (faux pour une URL inconnue sans cookie de session, par ex.). */
+    public function isActive(): bool
+    {
+        return session_status() === PHP_SESSION_ACTIVE;
+    }
+
+    /**
+     * Cookie de session envoyé par le navigateur : un administrateur est peut-être connecté.
+     *
+     * @param array<string, mixed> $cookies cookies de la requête (getCookieParams())
+     */
+    public static function hasCookie(array $cookies): bool
+    {
+        return is_string($cookies[self::COOKIE] ?? null) && $cookies[self::COOKIE] !== '';
+    }
+
     public function adminId(): ?int
     {
         return isset($_SESSION['admin_id']) ? (int) $_SESSION['admin_id'] : null;

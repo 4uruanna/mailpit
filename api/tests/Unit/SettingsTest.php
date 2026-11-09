@@ -42,6 +42,7 @@ final class SettingsTest extends TestCase
         self::assertSame(7200, $settings->sessionLifetime);
         self::assertSame('Europe/Paris', $settings->timezone);
         self::assertTrue($settings->forceHttps, 'HTTPS obligatoire par défaut');
+        self::assertSame(10 * 1024 * 1024, $settings->logMaxSize, 'log archivé à 10 Mo par défaut');
     }
 
     public function testAllValues(): void
@@ -51,6 +52,7 @@ final class SettingsTest extends TestCase
             'base_path'   => '/api/',
             'force_https' => false,
             'log_file'    => '/tmp/api.log',
+            'log_max_size' => 2 * 1024 * 1024,
             'db'          => ['host' => 'db', 'port' => '3307', 'name' => 'n', 'user' => 'u', 'password' => 'p'],
             'webhook'     => [
                 'allowed_ips'         => [' 203.0.113.10 ', '2001:db8::/64'],
@@ -81,6 +83,13 @@ final class SettingsTest extends TestCase
         self::assertSame(60, $settings->sessionLifetime);
         self::assertSame('UTC', $settings->timezone);
         self::assertFalse($settings->forceHttps);
+        self::assertSame(2 * 1024 * 1024, $settings->logMaxSize);
+    }
+
+    public function testLogRotationCanBeDisabled(): void
+    {
+        self::assertSame(0, Settings::fromArray(['log_max_size' => 0] + self::minimal())->logMaxSize);
+        self::assertSame(1024 * 1024, Settings::fromArray(['log_max_size' => 1024 * 1024] + self::minimal())->logMaxSize, 'minimum : 1 Mo');
     }
 
     public function testBasePathGetsLeadingSlash(): void
@@ -116,6 +125,9 @@ final class SettingsTest extends TestCase
         yield 'session en texte'        => [['app' => ['session_lifetime' => '7200']] + $config, '« app.session_lifetime »'];
         yield 'force_https en texte'    => [['force_https' => 'false'] + $config, '« force_https » doit valoir true ou false'];
         yield 'force_https à 0'         => [['force_https' => 0] + $config, '« force_https » doit valoir true ou false'];
+        yield 'log_max_size trop petit' => [['log_max_size' => 1024 * 1024 - 1] + $config, '« log_max_size » doit être un nombre d\'octets, 1048576 (1 Mo) minimum, ou 0 (jamais de rotation)'];
+        yield 'log_max_size négatif'    => [['log_max_size' => -1] + $config, '« log_max_size »'];
+        yield 'log_max_size texte'      => [['log_max_size' => '10M'] + $config, '« log_max_size »'];
         yield 'fuseau inconnu'          => [['app' => ['timezone' => 'Mars/Olympus']] + $config, '« app.timezone » : fuseau horaire inconnu « Mars/Olympus »'];
     }
 

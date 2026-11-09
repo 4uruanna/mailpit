@@ -524,6 +524,7 @@ Notez ici chaque écart constaté et sa correction, au fil des essais.
 | 2026-11-09 | 1.4 | Depuis le serveur : `403` ou `404` sur les 10 chemins, aucun `200` | — |
 | 2026-11-09 | 2.2 | Sans jeton `401`, faux jeton `401`, bon jeton `200` + liste vide (base joignable) | — |
 | 2026-11-09 | 2.3 | IPv4 `200`, IPv6 `403`. L'API a une IPv6 (OVH), le serveur sait la joindre | Comportement voulu : seule l'IPv4 est autorisée |
+| 2026-11-09 | 2.4 | Mail `201 created` (`missing: ["2"]`), pièce `201 stored` (`complete: true`), renvoi `200 duplicate` | — |
 
 ---
 

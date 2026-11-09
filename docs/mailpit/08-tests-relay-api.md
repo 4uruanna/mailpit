@@ -25,7 +25,7 @@ Chaque étape indique **où** la faire :
 ## Suivi
 
 - [x] [Phase 0](#phase-0--point-de-départ) — Point de départ : Mailpit reçoit des mails
-- [ ] [Phase 1](#phase-1--lapi-est-en-ligne) — L'API est en ligne et protégée
+- [x] [Phase 1](#phase-1--lapi-est-en-ligne) — L'API est en ligne et protégée
 - [ ] [Phase 2](#phase-2--lapi-répond-au-serveur-mailpit) — L'API répond au serveur Mailpit
 - [ ] [Phase 3](#phase-3--le-relais-démarre) — Le relais démarre
 - [ ] [Phase 4](#phase-4--le-trajet-complet) — Le trajet complet : un mail arrive dans l'API
@@ -521,6 +521,7 @@ Notez ici chaque écart constaté et sa correction, au fil des essais.
 | 2026-11-09 | 0.2 | IPv4 fixe. IPv6 = adresse temporaire (change régulièrement) | Seule l'IPv4 dans `allowed_ips`. Tous les `curl` vers l'API passent en `curl -4` |
 | 2026-11-09 | 1.2 | `schema.sql` importé (seul fichier SQL depuis le retrait des upgrades), tables visibles, MySQL 8.4 | — |
 | 2026-11-09 | 1.3 | `403` depuis l'ordinateur, `401` (sans jeton) depuis le serveur Mailpit | Étape 1.4 déplacée sur le serveur : depuis une IP refusée, le `403` du filtre IP masque les fichiers servis directement |
+| 2026-11-09 | 1.4 | Depuis le serveur : `403` ou `404` sur les 10 chemins, aucun `200` | — |
 
 ---
 

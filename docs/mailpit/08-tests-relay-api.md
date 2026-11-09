@@ -545,6 +545,7 @@ Notez ici chaque écart constaté et sa correction, au fil des essais.
 | 2026-11-09 | 4.5 | Vrai mail depuis Internet avec une photo (130 Ko) : `complete: true`, pièce `stored`, aucun `UFW BLOCK`. La règle SMTP du réseau `mailpit` (`10.89.25.0/24`) fonctionne | Ancienne règle `10.88.0.0/16 1025/tcp` devenue inutile : à supprimer |
 | 2026-11-09 | 4.5 (suite) | Ancienne règle ufw `10.88.0.0/16 1025/tcp` supprimée | — |
 | 2026-11-09 | 5.1 | La boucle d'envoi semble bloquée : `$TO` était vide dans le terminal, et `swaks` attendait la saisie du destinataire (`To:`) | Commandes protégées par `${TO:?…}` : elles s'arrêtent tout de suite avec un message si `TO` est vide |
+| 2026-11-09 | 5.1 (suite) | Relais arrêté : 3 mails acceptés par Mailpit, 3 erreurs de webhook (attendues). Au redémarrage, les 3 mails sont enregistrés par l'API dans la même seconde. `status.php` : 0 / 0 | — |
 
 ---
 

@@ -540,6 +540,7 @@ Notez ici chaque écart constaté et sa correction, au fil des essais.
 | 2026-11-09 | 4.1 | 1er envoi : aucun mail, car l'adresse d'exemple était restée dans la commande (`>/dev/null` masquait le refus). 2e envoi : tag `relayed`, mail resté non lu | Variable `TO` exportée en début de phase 4, utilisée par toutes les commandes des phases 4 et 5 |
 | 2026-11-09 | 4.1 (suite) | Envoi à 12:09:23, enregistré par l'API à 12:09:23 (webhook immédiat, aucune erreur de webhook dans Mailpit). API : `complete: true` | — |
 | 2026-11-09 | 4.2 | `complete: true`. Image intégrée (`inline`, `point.png`) et pièce jointe (`attachment`, `note.txt`) toutes deux `stored` | — |
+| 2026-11-09 | 4.3 | Mail de 8,2 Mo (pièce de 6 Mo) : livré, `complete: true`, pièce `too_large` (6000000 octets), avertissement dans les logs du relais | — |
 
 ---
 

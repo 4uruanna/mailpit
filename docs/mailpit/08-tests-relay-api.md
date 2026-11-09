@@ -128,7 +128,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST https://api.mondomaine.fr/v1/me
 Faites ce test **depuis le serveur Mailpit** (il fonctionne aussi depuis votre ordinateur, le filtre IP ne protégeant que les routes du relais). On vérifie que les fichiers sont **vraiment** protégés : un fichier qu'Apache servirait directement, sans passer par PHP, répondrait `200`.
 
 ```bash
-for p in config.php .ovhconfig .htaccess composer.json composer.lock vendor/autoload.php src/Kernel.php sql/schema.sql var/log/api.log public/.htaccess templates/layout.php bin/create-admin.php bin/cleanup.php var/messages/.maintenance tests/bootstrap.php phpunit.xml.dist; do
+for p in config.php .ovhconfig .htaccess composer.json composer.lock vendor/autoload.php src/Kernel.php sql/schema.sql var/log/api.log var/log/api.log.1 public/.htaccess templates/layout.php bin/create-admin.php bin/cleanup.php var/messages/.maintenance tests/bootstrap.php phpunit.xml.dist; do
   printf '%-26s ' "$p"; curl -4 -s -o /dev/null -w '%{http_code}\n' "https://api.mondomaine.fr/$p"
 done
 ```
@@ -593,7 +593,7 @@ sudo journalctl -u mailpit-relay -n 5 --no-pager
    ```
    Les pièces (`mailpit_parts`) partent avec leurs mails. Les dossiers `var/messages/<ID>/` correspondants sont effacés par le nettoyage de l'API (automatique après une requête du relais, ou `php bin/cleanup.php`) une fois restés 1 heure sans modification. Si vous les laissez, les tests disparaissent de toute façon au bout de 7 jours (`webhook.max_age_days`), base **et** fichiers.
 5. ☁️ **`config.php`** : vérifiez `'debug' => false` et `'force_https' => true`.
-6. ☁️ **`var/log/api.log`** : relisez-le, puis videz-le. Il garde la trace des tests 401 et 403 (`[auth]`, `[ip-filter]`, `[https]`). Les lignes `[maintenance] mails supprimés : …` résument les nettoyages automatiques. Toute autre erreur (PHP, base de données, `[prune]`, `[maintenance] nettoyage impossible`) est à examiner.
+6. ☁️ **`var/log/api.log`** : relisez-le (et `api.log.1` s'il existe : le log y est archivé à 10 Mo), puis videz-le si vous voulez repartir d'un log propre. Il garde la trace des tests 401 et 403 (`[auth]`, `[ip-filter]`, `[https]`). Les lignes `[maintenance] mails supprimés : …` résument les nettoyages automatiques. Toute autre erreur (PHP, base de données, `[prune]`, `[maintenance] nettoyage impossible`) est à examiner.
 7. Cochez les phases dans le [suivi](#suivi) en haut de page.
 
 ---

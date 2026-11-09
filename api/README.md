@@ -52,7 +52,8 @@ api/
 ├── src/                 # code de l'API
 ├── templates/           # pages HTML du Dashboard
 ├── tests/               # tests automatisés (voir « Tests automatisés »), inutiles sur l'hébergement
-├── var/log/             # logs (doit être accessible en écriture)
+├── var/log/             # logs (accessible en écriture) : api.log, son archive api.log.1
+│                        # (rotation à 10 Mo) et api.log.lock (verrou de la rotation)
 ├── var/messages/        # pièces jointes et images intégrées, un dossier par mail (accessible en écriture),
 │                        # et .maintenance : date du dernier nettoyage
 └── vendor/              # généré par composer install, à envoyer en FTP
@@ -158,6 +159,8 @@ cp config.example.php config.php
 | `app.session_lifetime` | Dashboard : déconnexion après ce nombre de secondes d'inactivité (2 h par défaut) |
 | `app.timezone` | Dashboard : fuseau horaire d'affichage des dates (`Europe/Paris` par défaut) |
 | `force_https` | `true` (défaut) : HTTPS obligatoire. `false` **uniquement** pour un essai en local sans HTTPS. Voir [HTTPS obligatoire](#https-obligatoire) |
+| `log_file` | fichier de log de l'API, `var/log/api.log` par défaut. `null` = log par défaut de l'hébergement |
+| `log_max_size` | taille, en octets, à laquelle le log est archivé en `api.log.1` : 10 Mo par défaut (`10 * 1024 * 1024`), 1 Mo minimum, `0` = jamais. Voir [Logs](#logs--rotation-à-10-mo) |
 | `debug` | `false` en production |
 
 Générez le jeton une seule fois, puis copiez-le aux deux endroits :
@@ -215,7 +218,7 @@ Créez par exemple un dossier `api` à la racine FTP de l'hébergement (à côt�
 
 Envoyez aussi `templates/` (pages et script du Dashboard). Inutile d'envoyer `README.md`, `bin/`, `sql/`, `tests/`, `phpunit.xml.dist` et `config.example.php` (ils sont de toute façon bloqués par le `.htaccess`). Seule exception, facultative : `bin/cleanup.php`, si vous voulez lancer le nettoyage depuis une tâche planifiée (voir [Rétention](#rétention--7-jours-et-1000-mails-au-plus)).
 
-Les dossiers `var/log/` et `var/messages/` doivent être accessibles en écriture par PHP (droits `755` ou `705`, ce qui est le cas par défaut chez OVH). `var/messages/` contiendra toutes les pièces jointes des 7 derniers jours (1000 mails au plus) : surveillez l'espace disque de l'hébergement.
+Les dossiers `var/log/` et `var/messages/` doivent être accessibles en écriture par PHP (droits `755` ou `705`, ce qui est le cas par défaut chez OVH). `var/log/` reste petit : le log est archivé à 10 Mo, et une seule archive est gardée ([Logs](#logs--rotation-à-10-mo)). `var/messages/` contiendra toutes les pièces jointes des 7 derniers jours (1000 mails au plus) : surveillez l'espace disque de l'hébergement.
 
 ### 4. Brancher le domaine `api.amnesic.dev`
 
@@ -314,9 +317,9 @@ Les tests **PHPUnit** vérifient le code sur votre ordinateur, sans rien déploy
 
 | Suite | Dossier | Ce qui est testé | Base MySQL |
 |---|---|---|---|
-| `unit` | `tests/Unit/` | classes sans base : filtre IP (`IpMatcher`, `ClientIpResolver`), adresses, validation du JSON des mails et des pièces (chaque erreur `422`), configuration (`Settings`), HTTPS (`HttpsDetector` : `HTTPS`, port 443, `X-Forwarded-Proto` d'un proxy de confiance ; `ForceHttpsMiddleware` : `301`, `403`, HSTS), filtres du Dashboard, jetons (`ApiScope`, `Authorization: Bearer`, jeton du relais refusé dans l'URL et avertissement sans sa valeur), adresse comptée par la limite de connexion (`LoginThrottle::ipKey`) | non |
+| `unit` | `tests/Unit/` | classes sans base : filtre IP (`IpMatcher`, `ClientIpResolver`), adresses, validation du JSON des mails et des pièces (chaque erreur `422`), configuration (`Settings`), HTTPS (`HttpsDetector` : `HTTPS`, port 443, `X-Forwarded-Proto` d'un proxy de confiance ; `ForceHttpsMiddleware` : `301`, `403`, HSTS), filtres du Dashboard, jetons (`ApiScope`, `Authorization: Bearer`, jeton du relais refusé dans l'URL et avertissement sans sa valeur), adresse comptée par la limite de connexion (`LoginThrottle::ipKey`), rotation du log (`LogRotator` : seuil, archive remplacée, fichier absent, `log_file` à `null`, verrou pris, échec sans exception, requêtes simultanées dans plusieurs processus) | non |
 | `integration` | `tests/Integration/` | accès à la base : mails, pièces, purge, suppression par âge (`created_at`), pièce d'un mail supprimé, nettoyage (`Maintenance` : mails trop anciens ou en trop, fichiers temporaires vieux ou récents, dossiers et fichiers sans ligne en base, au plus toutes les 15 minutes, verrou, erreur seulement écrite dans le log), liste par adresse (sans corps), mail complet limité aux adresses d'un jeton, suppression, jetons développeurs, limite de connexion au Dashboard (par identifiant et adresse, plafond par adresse, IPv6 par `/64`) | oui |
-| `http` | `tests/Http/` | l'application complète (`Kernel::create`) avec de fausses requêtes : routes du relais (`403`, `401`, `401` avec `?token=…`, `415`, `400`, `413`, `422`, `201`, `200`), envoi des pièces jusqu'à `"complete": true`, routes des développeurs (liste sans corps, mail complet par son ID, `404` hors des adresses du jeton, jeton du relais selon l'IP), Dashboard (redirection vers la connexion, refus sans jeton anti-CSRF, messages de blocage, cookie de session `Secure`, exemple `curl` de la page du jeton en `https://` derrière le frontal OVH), requêtes en clair (`301`, `403` sans rien enregistrer, proxy de confiance, `force_https` désactivé), nettoyage après les requêtes acceptées du relais (et pas après les autres), pièce d'un mail supprimé pendant l'envoi (`404`, fichier effacé) | oui |
+| `http` | `tests/Http/` | l'application complète (`Kernel::create`) avec de fausses requêtes : routes du relais (`403`, `401`, `401` avec `?token=…`, `415`, `400`, `413`, `422`, `201`, `200`), envoi des pièces jusqu'à `"complete": true`, routes des développeurs (liste sans corps, mail complet par son ID, `404` hors des adresses du jeton, jeton du relais selon l'IP), Dashboard (redirection vers la connexion, refus sans jeton anti-CSRF, messages de blocage, cookie de session `Secure`, exemple `curl` de la page du jeton en `https://` derrière le frontal OVH), requêtes en clair (`301`, `403` sans rien enregistrer, proxy de confiance, `force_https` désactivé), nettoyage après les requêtes acceptées du relais (et pas après les autres), pièce d'un mail supprimé pendant l'envoi (`404`, fichier effacé), rotation du log au démarrage d'une requête (et requête servie quand l'archivage échoue) | oui |
 
 **Prérequis** : PHP 8.4 minimum avec `pdo_mysql` et `mbstring`, Composer, et une base MySQL **de test** (8.4 comme l'hébergement ; 8.0.19 minimum).
 
@@ -376,6 +379,7 @@ Les pièces jointes des tests sont écrites dans un dossier temporaire, supprim�
 | « Trop de redirections » (`ERR_TOO_MANY_REDIRECTS`) | Un proxy ou un CDN joint l'hébergement en `http://` sans être listé dans `proxy.trusted_proxies` : voir [Derrière un proxy ou un CDN](#derrière-un-proxy-ou-un-cdn) |
 | `500` avec `{"error":"Erreur de configuration du serveur"}` | `vendor/` ou `config.php` absent, ou `config.php` invalide (détail dans `var/log/api.log`). Souvent : `webhook.token` vide ou trop court (**obligatoire**, 32 caractères minimum) |
 | `500` avec `Slim Application Error` | Souvent la base : identifiants faux ou table absente. Détail dans `var/log/api.log` |
+| `[log] archivage de « …/api.log » en « …/api.log.1 » impossible` dans le log | PHP ne peut pas renommer le log : rendez `var/log/` accessible en écriture (droits `755` ou `705`). Les requêtes sont servies normalement, mais le log grossit tant que ce n'est pas corrigé |
 | `404` sur `/v1/messages` | `.htaccess` non envoyés (fichiers cachés), ou mauvais dossier racine du multisite. Si l'API est dans un sous-dossier de l'URL, renseignez `base_path` |
 | Certains mails manquent en base | Le relais ne les a pas encore livrés (API en panne, jeton ou IP refusés : il réessaie), ou les a refusés définitivement (tag `relay-failed` dans Mailpit). Voir ses logs : `sudo journalctl -u mailpit-relay -n 50` |
 | `413` sur `POST /v1/messages` | Le JSON du mail (texte + HTML + en-têtes) dépasse `webhook.max_body_size` (16 Mo par défaut) : augmentez-le |
@@ -401,7 +405,7 @@ Les pièces jointes des tests sont écrites dans un dossier temporaire, supprim�
 | `405` sur `GET /v1/messages/{id}` | L'API en ligne est une version précédente, sans cette route (seul `DELETE` existe à cette adresse) : renvoyez `src/` en FTP |
 | `GET /v1/messages` : plus de `text` ni de `html` | Normal : la liste ne donne que des résumés. Le corps et les en-têtes se lisent avec `GET /v1/messages/{id}` ([Lire un mail](#lire-un-mail--get-v1messagesid)) |
 
-Le fichier `var/log/api.log` n'est pas vidé automatiquement : supprimez-le de temps en temps par FTP.
+Le fichier `var/log/api.log` n'a pas besoin d'être vidé : il est archivé tout seul à 10 Mo (voir [Logs](#logs--rotation-à-10-mo)).
 
 > ℹ️ Le jeton voyage uniquement dans un en-tête : il n'apparaît pas dans les logs d'accès de l'hébergement. Un jeton passé dans l'URL (`?token=…`) est refusé, mais il figure quand même dans ces logs (visibles depuis votre espace client OVH). Si `var/log/api.log` signale `[auth] jeton du relais dans l'URL`, changez le jeton.
 
@@ -632,6 +636,25 @@ Gardez les mêmes valeurs côté Mailpit ([Partie 1, étape 3](../docs/mailpit/0
 > Pour l'automatiser (facultatif) : envoyez `bin/cleanup.php` en FTP, puis Espace client OVH → **Hébergements** → onglet **Tâches planifiées - Cron** (parfois sous **Plus**) → **Ajouter une planification** : commande `api/bin/cleanup.php` (chemin depuis la racine FTP), langage PHP 8.4 ou plus, une fois par jour. Le script refuse d'être appelé depuis le web (`404`, et `bin/` est bloqué par le `.htaccess`).
 
 Pour supprimer un mail à la main, supprimez sa ligne dans `mailpit_messages` (ses lignes de `mailpit_parts` et `mailpit_message_recipients` partent avec elle) : son dossier `var/messages/<mailpit_id>/` est effacé par un nettoyage suivant, une fois resté 1 heure sans modification. Plus simple : un jeton développeur associé à son adresse peut le supprimer, base et fichiers (`DELETE /v1/messages/{id}`).
+
+## Logs : rotation à 10 Mo
+
+Les erreurs PHP et les requêtes refusées (`[auth]`, `[ip-filter]`, `[https]`, `[signin]`…) sont écrites dans `log_file`, `var/log/api.log` par défaut. Les robots qui scannent Internet le remplissent vite : l'API l'archive toute seule.
+
+**Rotation** : quand `api.log` atteint **10 Mo** (`log_max_size`), il est renommé en `api.log.1`, et un nouveau `api.log` repart de zéro. L'archive précédente est remplacée. `var/log/` ne contient donc jamais plus de deux logs d'environ 10 Mo. Rien à vider à la main, rien à planifier.
+
+| Fichier | Contenu |
+|---|---|
+| `var/log/api.log` | le log en cours |
+| `var/log/api.log.1` | l'archive : le log d'avant la dernière rotation |
+| `var/log/api.log.lock` | fichier vide : verrou de la rotation |
+
+- **Quand ?** Au début de chaque requête, avant toute écriture dans le log : un simple `stat` du fichier, sans coût notable. `bin/cleanup.php` fait la même vérification.
+- **Requêtes simultanées.** Une seule archive le fichier (verrou sur `api.log.lock`, sans attente), puis vérifie de nouveau sa taille une fois le verrou obtenu. Les autres voient le nouveau fichier : l'archive n'est jamais remplacée par un log presque vide.
+- **Erreur.** Si le renommage est impossible (droits de `var/log/`), la requête est servie normalement et le log continue dans le même fichier, avec une ligne `[log] archivage de « … » en « … » impossible` à chaque requête.
+- **Protection.** Les trois fichiers sont inaccessibles depuis le web : le dossier `var/` est interdit, et le `.htaccess` refuse aussi les noms en `.log`, `.log.1` et `.lock`.
+
+> 💡 Pour garder plus d'historique, augmentez `log_max_size` (ex. `50 * 1024 * 1024` : deux fichiers d'environ 50 Mo). `0` désactive la rotation : déconseillé, le log grossit alors sans limite.
 
 ## HTTPS obligatoire
 

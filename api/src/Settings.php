@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App;
 
+use App\Log\LogRotator;
 use InvalidArgumentException;
 
 /**
@@ -13,6 +14,9 @@ final readonly class Settings
 {
     /** Longueur minimale du jeton partagé avec le relais (openssl rand -hex 32 = 64 caractères). */
     public const int MIN_TOKEN_LENGTH = 32;
+
+    /** Taille minimale d'un fichier de log avant rotation (log_max_size), hors 0 : 1 Mo. */
+    public const int MIN_LOG_MAX_SIZE = 1024 * 1024;
 
     /**
      * @param list<string> $allowedIps
@@ -41,6 +45,8 @@ final readonly class Settings
         public bool $forceHttps = true,
         /** Mails supprimés ce nombre de jours après leur réception par Mailpit, 0 = jamais. */
         public int $maxAgeDays = 7,
+        /** Le log (log_file) est archivé en « .1 » à cette taille, en octets, 0 = jamais. */
+        public int $logMaxSize = LogRotator::DEFAULT_MAX_SIZE,
     ) {
     }
 
@@ -113,7 +119,21 @@ final readonly class Settings
             timezone: $timezone,
             forceHttps: $forceHttps,
             maxAgeDays: self::maxAgeDays($webhook),
+            logMaxSize: self::logMaxSize($config),
         );
+    }
+
+    private static function logMaxSize(array $config): int
+    {
+        $value = $config['log_max_size'] ?? LogRotator::DEFAULT_MAX_SIZE;
+        if (!is_int($value) || ($value !== 0 && $value < self::MIN_LOG_MAX_SIZE)) {
+            throw new InvalidArgumentException(sprintf(
+                '« log_max_size » doit être un nombre d\'octets, %d (1 Mo) minimum, ou 0 (jamais de rotation)',
+                self::MIN_LOG_MAX_SIZE,
+            ));
+        }
+
+        return $value;
     }
 
     private static function maxMessages(array $section): int

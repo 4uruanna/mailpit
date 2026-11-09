@@ -19,6 +19,7 @@ declare(strict_types=1);
  * Il lit config.php et vendor/ comme l'API. Les erreurs détaillées vont dans le log (log_file).
  */
 
+use App\Log\LogRotator;
 use App\Persistence\Database;
 use App\Persistence\FileStore;
 use App\Persistence\Maintenance;
@@ -54,10 +55,11 @@ if (!is_array($config)) {
 
 try {
     $settings = Settings::fromArray($config);
-    // Même log que l'API : les fichiers impossibles à effacer y sont détaillés.
+    // Même log que l'API, avec la même rotation (log_max_size) : les fichiers impossibles à effacer
+    // y sont détaillés.
     if ($settings->logFile !== null) {
         ini_set('log_errors', '1');
-        ini_set('error_log', $settings->logFile);
+        new LogRotator($settings->logFile, $settings->logMaxSize)->start();
     }
 
     $maintenance = new Maintenance(

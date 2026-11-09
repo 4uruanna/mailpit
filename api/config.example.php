@@ -25,6 +25,11 @@ return [
     // Fichier de log (erreurs PHP, requêtes refusées). null = log par défaut de l'hébergement.
     'log_file' => __DIR__ . '/var/log/api.log',
 
+    // Rotation du log : à cette taille (en octets), api.log est renommé en api.log.1 (l'archive
+    // précédente est remplacée) et un nouveau fichier repart de zéro. Vérifié à chaque requête.
+    // 1 Mo minimum. 0 = jamais (le log grossit alors sans limite).
+    'log_max_size' => 10 * 1024 * 1024,
+
     // Base MySQL (Espace client OVH > Hébergements > Bases de données).
     'db' => [
         'host'     => 'xxxxxx.mysql.db',

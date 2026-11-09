@@ -161,6 +161,8 @@ Avec le relais de la [Partie 7](07-relay.md), l'API applique les mêmes règles,
 
 > 💡 **Relais arrêté longtemps** : sans requête du relais, l'API ne nettoie pas. Lancez `php bin/cleanup.php` dans son dossier (SSH), ou créez une tâche planifiée quotidienne dans l'espace client OVH (voir « Rétention » dans le [README de l'API](../../api/README.md#rétention--7-jours-et-1000-mails-au-plus)). Chaque nettoyage est résumé dans `var/log/api.log` (`[maintenance] …`).
 
+Le log de l'API, `var/log/api.log`, ne grossit pas sans limite : à 10 Mo, il est archivé en `api.log.1` (l'archive précédente est remplacée) et repart de zéro (`log_max_size`, voir « Logs » dans le [README de l'API](../../api/README.md#logs--rotation-à-10-mo)). Rien à vider à la main.
+
 Place occupée par les mails :
 
 ```bash

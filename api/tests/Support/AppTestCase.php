@@ -51,10 +51,12 @@ abstract class AppTestCase extends DatabaseTestCase
     protected function config(): array
     {
         return [
-            'debug'    => false,
-            'log_file' => TempDir::logFile(),
-            'db'       => TestDatabase::config(),
-            'webhook'  => [
+            'debug'        => false,
+            'log_file'     => TempDir::logFile(),
+            // Pas de rotation : des tests lisent la fin de ce log, qui grossit d'un lancement à l'autre.
+            'log_max_size' => 0,
+            'db'           => TestDatabase::config(),
+            'webhook'      => [
                 'allowed_ips'         => [self::RELAY_IP],
                 'token'               => self::RELAY_TOKEN,
                 'max_body_size'       => self::MAX_BODY_SIZE,
@@ -64,7 +66,7 @@ abstract class AppTestCase extends DatabaseTestCase
                 'max_age_days'        => 0,
                 'storage_dir'         => $this->storageDir,
             ],
-            'app' => ['timezone' => 'Europe/Paris'],
+            'app'          => ['timezone' => 'Europe/Paris'],
         ];
     }
 

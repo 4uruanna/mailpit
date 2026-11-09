@@ -21,6 +21,7 @@ use App\Http\ClientIpResolver;
 use App\Http\ErrorHandler;
 use App\Http\HttpsDetector;
 use App\Http\IpMatcher;
+use App\Log\LogRotator;
 use App\Middleware\ApiTokenMiddleware;
 use App\Middleware\DashboardMiddleware;
 use App\Middleware\ForceHttpsMiddleware;
@@ -52,9 +53,10 @@ final class Kernel
 
         ini_set('display_errors', $settings->debug ? '1' : '0');
         ini_set('log_errors', '1');
-        if ($settings->logFile !== null) {
-            ini_set('error_log', $settings->logFile);
-        }
+        // Rotation du log (log_max_size, 10 Mo par défaut) avant toute écriture, puis error_log()
+        // vers log_file. Un simple stat tant que le fichier est sous la limite, et une rotation
+        // impossible n'empêche jamais la requête.
+        new LogRotator($settings->logFile, $settings->logMaxSize)->start();
 
         $app = AppFactory::create();
         $app->setBasePath($settings->basePath);

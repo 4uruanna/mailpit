@@ -10,11 +10,12 @@
 # Pas de listing des dossiers.
 Options -Indexes
 
-# Fichiers cachés (.htaccess, .ovhconfig, .git…) et fichiers sensibles.
+# Fichiers cachés (.htaccess, .ovhconfig, .git…) et fichiers sensibles, dont les logs et leur
+# archive (api.log, api.log.1, api.log.lock), dans tous les dossiers.
 <FilesMatch "^\.">
     Require all denied
 </FilesMatch>
-<FilesMatch "(^config(\.example)?\.php|^composer\.(json|lock)|\.(sql|md|log|ini|env|lock|dist|bak|sw[op])|~)$">
+<FilesMatch "(^config(\.example)?\.php|^composer\.(json|lock)|\.(sql|md|log(\.[0-9]+)?|ini|env|lock|dist|bak|sw[op])|~)$">
     Require all denied
 </FilesMatch>
 

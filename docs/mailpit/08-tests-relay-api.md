@@ -523,6 +523,7 @@ Notez ici chaque écart constaté et sa correction, au fil des essais.
 | 2026-11-09 | 1.3 | `403` depuis l'ordinateur, `401` (sans jeton) depuis le serveur Mailpit | Étape 1.4 déplacée sur le serveur : depuis une IP refusée, le `403` du filtre IP masque les fichiers servis directement |
 | 2026-11-09 | 1.4 | Depuis le serveur : `403` ou `404` sur les 10 chemins, aucun `200` | — |
 | 2026-11-09 | 2.2 | Sans jeton `401`, faux jeton `401`, bon jeton `200` + liste vide (base joignable) | — |
+| 2026-11-09 | 2.3 | IPv4 `200`, IPv6 `403`. L'API a une IPv6 (OVH), le serveur sait la joindre | Comportement voulu : seule l'IPv4 est autorisée |
 
 ---
 

@@ -162,6 +162,54 @@ final class MessageRepositoryTest extends DatabaseTestCase
         self::assertSame([], $this->repository->prune(1, batch: 2));
     }
 
+    public function testMarkPartStoredAfterDeletionReturnsNull(): void
+    {
+        $this->save(self::payload('m1', parts: [['2', 10]]));
+        $pk = $this->pk('m1');
+        // Mail supprimé (purge, Dashboard, API) pendant l'envoi de sa pièce.
+        self::assertTrue($this->repository->delete('m1'));
+
+        self::assertNull($this->repository->markPartStored($pk, '2', 7, hash('sha256', 'contenu'), 'm1/part-2'));
+        self::assertSame(0, (int) $this->scalar('SELECT COUNT(*) FROM mailpit_parts'));
+
+        // Mail toujours là, mais pièce inconnue.
+        $this->save(self::payload('m2'));
+        self::assertNull($this->repository->markPartStored($this->pk('m2'), '9', 7, hash('sha256', 'contenu'), 'm2/part-9'));
+    }
+
+    public function testDeleteReceivedBefore(): void
+    {
+        // Ordre d'arrivée différent de l'ordre de réception par Mailpit (relais en retard).
+        $this->save(self::payload('recent', parts: [['2', 10]], created: '2026-11-08T10:00:00Z'));
+        $this->save(self::payload('ancien2', created: '2026-11-01T10:00:00+02:00'));
+        $this->save(self::payload('ancien1', parts: [['2', 10]], created: '2026-10-31T23:59:59Z'));
+        $this->save(self::payload('limite', created: '2026-11-02T00:00:00Z'));
+
+        $before = new \DateTimeImmutable('2026-11-02 01:00:00', new \DateTimeZone('Europe/Paris'));
+        // Les plus anciens d'abord, par paquets ; « limite » (2 novembre 00:00 UTC) n'est pas avant.
+        self::assertSame(['ancien1'], $this->repository->deleteReceivedBefore($before, batch: 1));
+        self::assertSame(['ancien2'], $this->repository->deleteReceivedBefore($before, batch: 1));
+        self::assertSame([], $this->repository->deleteReceivedBefore($before));
+
+        self::assertSame(['recent', 'limite'], $this->pdo->query('SELECT mailpit_id FROM mailpit_messages ORDER BY id')->fetchAll(\PDO::FETCH_COLUMN));
+        self::assertSame(1, (int) $this->scalar('SELECT COUNT(*) FROM mailpit_parts'));
+        self::assertSame(2, (int) $this->scalar('SELECT COUNT(*) FROM mailpit_message_recipients'));
+    }
+
+    public function testStoredPaths(): void
+    {
+        $this->save(self::payload('m1', parts: [['2', 10], ['3', 10], ['4', self::MAX_PART_SIZE + 1]]));
+        $this->repository->markPartStored($this->pk('m1'), '2', 7, hash('sha256', 'contenu'), 'm1/part-2');
+        $this->save(self::payload('m2'));
+
+        self::assertSame(
+            ['m1' => ['m1/part-2'], 'm2' => []],
+            $this->repository->storedPaths(['m1', 'm2', 'inconnu']),
+            'mail inconnu : pas d\'entrée ; mail sans fichier : liste vide',
+        );
+        self::assertSame([], $this->repository->storedPaths([]));
+    }
+
     public function testListWithAddressFilter(): void
     {
         $this->save(self::payload('a1', ['alice@test.fr'], [['2', 10]], '2026-11-08T10:00:00Z'));

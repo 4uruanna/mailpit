@@ -25,12 +25,14 @@ use App\Middleware\ApiTokenMiddleware;
 use App\Middleware\DashboardMiddleware;
 use App\Middleware\ForceHttpsMiddleware;
 use App\Middleware\IpFilterMiddleware;
+use App\Middleware\MaintenanceMiddleware;
 use App\Middleware\RequireAdminMiddleware;
 use App\Middleware\TokenAuthMiddleware;
 use App\Persistence\AdminRepository;
 use App\Persistence\Database;
 use App\Persistence\FileStore;
 use App\Persistence\LoginAttemptRepository;
+use App\Persistence\Maintenance;
 use App\Persistence\MessageRepository;
 use App\Persistence\TokenRepository;
 use DateTimeZone;
@@ -82,6 +84,9 @@ final class Kernel
             $settings->maxMessages,
         );
         $upload = new UploadPartAction($messages, $files, $responseFactory, $settings->maxPartSize);
+        // Nettoyage (mails trop anciens, au-delà de max_messages, fichiers orphelins) après les
+        // requêtes acceptées du relais, au plus toutes les 15 minutes : aucune tâche planifiée.
+        $maintenance = new MaintenanceMiddleware(new Maintenance($messages, $files, $settings->maxAgeDays, $settings->maxMessages));
 
         // ── Développeurs : jetons créés dans le Dashboard ────────────────────────────────────
         $tokenAuth = new ApiTokenMiddleware($tokens, $responseFactory);
@@ -102,8 +107,8 @@ final class Kernel
         $messagesPage = new MessagesController($messages, $files, $session, $view);
         $tokensPage = new TokensController($tokens, $messages, $session, $view, $https);
 
-        //   POST   /v1/messages                     relais : le mail (JSON)
-        //   POST   /v1/messages/{id}/part/{partId}  relais : le contenu d'une pièce jointe
+        //   POST   /v1/messages                     relais : le mail (JSON), puis nettoyage si c'est le moment
+        //   POST   /v1/messages/{id}/part/{partId}  relais : le contenu d'une pièce jointe, puis nettoyage
         //   GET    /v1/messages                     jeton : résumés des mails de ses adresses (?address, limit, offset, page)
         //   GET    /v1/messages/{id}                jeton : un mail complet (corps, en-têtes) de ses adresses
         //   DELETE /v1/messages/{id}                jeton : supprime un mail de ses adresses
@@ -111,13 +116,14 @@ final class Kernel
         //   DELETE /v1/addresses?address=…          jeton : supprime les mails d'une de ses adresses
         //   /v1/app/…                               Dashboard (session)
         $app->group('/v1', function (RouteCollectorProxy $v1) use (
-            $create, $upload, $ipFilter, $relayAuth,
+            $create, $upload, $ipFilter, $relayAuth, $maintenance,
             $list, $show, $deleteMessage, $listAddresses, $deleteAddress, $tokenAuth, $listAuth,
             $session, $view, $admins, $signIn, $messagesPage, $tokensPage, $https,
         ): void {
-            // Middlewares de route : le dernier ajouté s'exécute en premier (filtre IP d'abord).
-            $v1->post('/messages', $create)->add($relayAuth)->add($ipFilter);
-            $v1->post('/messages/{id}/part/{partId}', $upload)->add($relayAuth)->add($ipFilter);
+            // Middlewares de route : le dernier ajouté s'exécute en premier (filtre IP, jeton, puis
+            // la route ; le nettoyage a lieu une fois la réponse calculée).
+            $v1->post('/messages', $create)->add($maintenance)->add($relayAuth)->add($ipFilter);
+            $v1->post('/messages/{id}/part/{partId}', $upload)->add($maintenance)->add($relayAuth)->add($ipFilter);
 
             $v1->get('/messages', $list)->add($listAuth);
             // Sans contrainte sur {id}, comme DELETE : l'action vérifie l'ID (404 « mail inconnu »).

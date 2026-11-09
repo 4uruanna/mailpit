@@ -46,6 +46,8 @@ final class TempDir
 
     /**
      * Fichiers contenus dans le dossier (chemins relatifs, triés), dossiers exclus.
+     * Le fichier « .maintenance » (date du dernier nettoyage, voir Maintenance) n'est pas listé :
+     * il est créé après chaque requête du relais. Les fichiers temporaires « .upload-… » le sont.
      *
      * @return list<string>
      */
@@ -58,8 +60,9 @@ final class TempDir
         $files = [];
         $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS));
         foreach ($iterator as $file) {
-            if ($file->isFile()) {
-                $files[] = substr($file->getPathname(), strlen($dir) + 1);
+            $path = substr($file->getPathname(), strlen($dir) + 1);
+            if ($file->isFile() && $path !== '.maintenance') {
+                $files[] = $path;
             }
         }
         sort($files);

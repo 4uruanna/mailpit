@@ -69,8 +69,16 @@ return [
         // de Mailpit, pour garder les mêmes mails des deux côtés. 0 = sans limite.
         'max_messages' => 1000,
 
+        // Les mails sont supprimés (base ET pièces jointes) ce nombre de jours après leur
+        // réception par Mailpit. Mettez la même durée dans MP_MAX_AGE de Mailpit (ex. 7d).
+        // Nettoyage automatique, au plus toutes les 15 minutes, après une requête du relais :
+        // aucune tâche planifiée n'est nécessaire (voir « Rétention » dans le README).
+        // 0 = jamais (seule la limite max_messages s'applique).
+        'max_age_days' => 7,
+
         // Dossier des pièces jointes : un sous-dossier par mail.
         // Il doit être accessible en écriture par PHP, et jamais servi par le web.
+        // Le nettoyage y retire aussi ce qu'un envoi interrompu ou un effacement raté a laissé.
         'storage_dir' => __DIR__ . '/var/messages',
     ],
 

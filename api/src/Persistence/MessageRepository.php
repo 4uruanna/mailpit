@@ -161,19 +161,31 @@ final readonly class MessageRepository
     /**
      * Marque une pièce comme enregistrée (le fichier est déjà sur le disque).
      *
-     * @return array{complete: bool, missing: list<string>, too_large: list<string>}
+     * @return array{complete: bool, missing: list<string>, too_large: list<string>}|null null si le
+     *         mail (ou la pièce) n'existe plus : supprimé pendant l'envoi (purge, Dashboard, API).
+     *         Le fichier n'est alors rattaché à rien : à effacer.
      */
-    public function markPartStored(int $messagePk, string $partId, int $size, string $sha256, string $path): array
+    public function markPartStored(int $messagePk, string $partId, int $size, string $sha256, string $path): ?array
     {
-        return $this->transaction(function (PDO $pdo) use ($messagePk, $partId, $size, $sha256, $path): array {
-            // Verrouille le message : deux envois simultanés ne calculent pas l'état en même temps.
-            $pdo->prepare('SELECT id FROM mailpit_messages WHERE id = ? FOR UPDATE')->execute([$messagePk]);
+        return $this->transaction(function (PDO $pdo) use ($messagePk, $partId, $size, $sha256, $path): ?array {
+            // Verrouille le message : deux envois simultanés ne calculent pas l'état en même temps,
+            // et une suppression attend la fin de cette transaction (elle effacera alors le fichier).
+            $lock = $pdo->prepare('SELECT id FROM mailpit_messages WHERE id = ? FOR UPDATE');
+            $lock->execute([$messagePk]);
+            if ($lock->fetchColumn() === false) {
+                return null;
+            }
 
-            $pdo->prepare(<<<'SQL'
+            $update = $pdo->prepare(<<<'SQL'
                 UPDATE mailpit_parts
                 SET status = 'stored', size = ?, sha256 = ?, storage_path = ?, stored_at = NOW(6)
                 WHERE message_id = ? AND part_id = ?
-                SQL)->execute([$size, $sha256, $path, $messagePk, $partId]);
+                SQL);
+            $update->execute([$size, $sha256, $path, $messagePk, $partId]);
+            // stored_at change à chaque fois : 0 ligne modifiée = la pièce n'existe plus.
+            if ($update->rowCount() === 0) {
+                return null;
+            }
 
             return $this->refreshCompletion($pdo, $messagePk);
         });
@@ -217,6 +229,68 @@ final readonly class MessageRepository
 
             return array_map(static fn (array $row): string => (string) $row['mailpit_id'], $rows);
         });
+    }
+
+    /**
+     * Supprime les mails reçus par Mailpit avant $before (colonne created_at, indexée), des plus
+     * anciens aux plus récents. Leurs pièces et destinataires partent avec eux (ON DELETE CASCADE).
+     * Au plus $batch mails par appel, comme prune().
+     *
+     * @return list<string> ID Mailpit des mails supprimés, pour effacer leurs fichiers
+     */
+    public function deleteReceivedBefore(DateTimeImmutable $before, int $batch = 200): array
+    {
+        $limit = $before->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s.u');
+
+        return $this->transaction(function (PDO $pdo) use ($limit, $batch): array {
+            $select = $pdo->prepare('SELECT id, mailpit_id FROM mailpit_messages WHERE created_at < ? ORDER BY created_at, id LIMIT ? FOR UPDATE');
+            $select->bindValue(1, $limit);
+            $select->bindValue(2, $batch, PDO::PARAM_INT);
+            $select->execute();
+            $rows = $select->fetchAll();
+            if ($rows === []) {
+                return [];
+            }
+
+            $ids = array_map(static fn (array $row): int => (int) $row['id'], $rows);
+            $placeholders = implode(',', array_fill(0, count($ids), '?'));
+            $pdo->prepare("DELETE FROM mailpit_messages WHERE id IN ($placeholders)")->execute($ids);
+
+            return array_map(static fn (array $row): string => (string) $row['mailpit_id'], $rows);
+        });
+    }
+
+    /**
+     * Fichiers enregistrés en base pour ces mails (mailpit_parts.storage_path).
+     *
+     * @param list<string> $mailpitIds
+     * @return array<string, list<string>> ID Mailpit => chemins relatifs au dossier de stockage.
+     *         Un mail absent de la base n'a pas d'entrée ; un mail sans fichier a une liste vide.
+     */
+    public function storedPaths(array $mailpitIds): array
+    {
+        $paths = [];
+        foreach (array_chunk(array_values($mailpitIds), 500) as $chunk) {
+            $statement = $this->database->pdo()->prepare(sprintf(
+                <<<'SQL'
+                    SELECT m.mailpit_id, p.storage_path
+                    FROM mailpit_messages m
+                    LEFT JOIN mailpit_parts p ON p.message_id = m.id AND p.storage_path IS NOT NULL
+                    WHERE m.mailpit_id IN (%s)
+                    SQL,
+                implode(',', array_fill(0, count($chunk), '?')),
+            ));
+            $statement->execute($chunk);
+            foreach ($statement->fetchAll() as $row) {
+                $id = (string) $row['mailpit_id'];
+                $paths[$id] ??= [];
+                if ($row['storage_path'] !== null) {
+                    $paths[$id][] = (string) $row['storage_path'];
+                }
+            }
+        }
+
+        return $paths;
     }
 
     private const string COLUMNS = <<<'SQL'

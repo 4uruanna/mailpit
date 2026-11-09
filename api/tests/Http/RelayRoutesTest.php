@@ -5,8 +5,11 @@ declare(strict_types=1);
 namespace App\Tests\Http;
 
 use App\Tests\Support\AppTestCase;
+use App\Tests\Support\OnFirstReadStream;
 use App\Tests\Support\TempDir;
 use Psr\Http\Message\ResponseInterface;
+use Slim\Psr7\Factory\ServerRequestFactory;
+use Slim\Psr7\Factory\StreamFactory;
 
 /**
  * POST /v1/messages et POST /v1/messages/{id}/part/{partId} : réservés au relais.
@@ -263,6 +266,38 @@ final class RelayRoutesTest extends AppTestCase
         $response = $this->postPart('m1', '2', $content);
         self::assertSame(413, $response->getStatusCode());
         self::assertSame([], TempDir::files($this->storageDir));
+    }
+
+    public function testPartOfAMessageDeletedDuringTheUploadIsNotKept(): void
+    {
+        $this->postMessage(self::payload('m1', parts: [['2', 5], ['3', 5]]));
+        self::assertSame(201, $this->postPart('m1', '3', 'autre')->getStatusCode());
+        $log = TempDir::logFile();
+        $before = is_file($log) ? (int) filesize($log) : 0;
+
+        // Le mail est supprimé (purge, Dashboard, API) pendant que la pièce 2 est reçue :
+        // sa ligne et son dossier disparaissent, puis l'action enregistre le fichier.
+        $body = new OnFirstReadStream(new StreamFactory()->createStream('hello'), function (): void {
+            $this->pdo->exec("DELETE FROM mailpit_messages WHERE mailpit_id = 'm1'");
+            TempDir::remove($this->storageDir . '/m1');
+        });
+        $request = new ServerRequestFactory()
+            ->createServerRequest('POST', 'https://api.test/v1/messages/m1/part/2', ['REMOTE_ADDR' => self::RELAY_IP, 'HTTPS' => 'on', 'SERVER_PORT' => '443'])
+            ->withHeader('Authorization', 'Bearer ' . self::RELAY_TOKEN)
+            ->withHeader('Content-Type', 'application/octet-stream')
+            ->withHeader('X-Content-SHA256', hash('sha256', 'hello'))
+            ->withBody($body);
+        $response = $this->handle($request);
+
+        self::assertSame(404, $response->getStatusCode());
+        self::assertSame(['error' => 'pièce inconnue : le mail a été supprimé pendant l\'envoi'], self::json($response));
+        // Le fichier reçu n'est rattaché à rien : effacé, avec son dossier vide.
+        self::assertSame([], TempDir::files($this->storageDir));
+        self::assertDirectoryDoesNotExist($this->storageDir . '/m1');
+        self::assertStringContainsString(
+            '[parts] m1/2 : mail supprimé pendant l\'envoi de la pièce, fichier effacé',
+            (string) file_get_contents($log, offset: $before),
+        );
     }
 
     public function testRetentionDeletesOldMessagesAndFiles(): void

@@ -28,6 +28,7 @@ use Psr\Http\Message\ServerRequestInterface;
  * la limite de taille : elles sont décrites en base, mais leur contenu n'est pas enregistré.
  *
  * Après chaque nouveau mail, les plus anciens au-delà de webhook.max_messages sont supprimés.
+ * Le reste du nettoyage (mails trop anciens, fichiers orphelins) est fait par Maintenance.
  */
 final readonly class CreateMessageAction
 {
@@ -110,7 +111,8 @@ final readonly class CreateMessageAction
     /**
      * Ne garde que les max_messages mails les plus récents. Un échec ici ne doit pas faire
      * échouer l'enregistrement du mail (déjà validé) : il est seulement écrit dans le log,
-     * et la purge sera refaite au prochain mail.
+     * et la purge sera refaite au prochain mail (ou par Maintenance, qui fait aussi la suite d'une
+     * grosse purge).
      */
     private function prune(): void
     {

@@ -33,6 +33,10 @@ final readonly class Settings
         public string $storageDir,
         public array $trustedProxies,
         public string $proxyHeader,
+        /** Dashboard : déconnexion après ce nombre de secondes d'inactivité. */
+        public int $sessionLifetime = 7200,
+        /** Dashboard : fuseau horaire d'affichage des dates. */
+        public string $timezone = 'Europe/Paris',
     ) {
     }
 
@@ -67,6 +71,16 @@ final readonly class Settings
 
         $storageDir = $webhook['storage_dir'] ?? dirname(__DIR__) . '/var/messages';
 
+        $dashboard = $config['app'] ?? [];
+        $sessionLifetime = $dashboard['session_lifetime'] ?? 7200;
+        if (!is_int($sessionLifetime) || $sessionLifetime < 60) {
+            throw new InvalidArgumentException('« app.session_lifetime » doit être un nombre de secondes (60 minimum)');
+        }
+        $timezone = (string) ($dashboard['timezone'] ?? 'Europe/Paris');
+        if (!in_array($timezone, timezone_identifiers_list(), true)) {
+            throw new InvalidArgumentException(sprintf('« app.timezone » : fuseau horaire inconnu « %s »', $timezone));
+        }
+
         return new self(
             debug: (bool) ($config['debug'] ?? false),
             basePath: $basePath,
@@ -86,6 +100,8 @@ final readonly class Settings
             storageDir: rtrim((string) $storageDir, '/'),
             trustedProxies: self::stringList($proxy['trusted_proxies'] ?? [], 'proxy.trusted_proxies'),
             proxyHeader: (string) ($proxy['header'] ?? 'X-Forwarded-For'),
+            sessionLifetime: $sessionLifetime,
+            timezone: $timezone,
         );
     }
 

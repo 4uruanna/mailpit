@@ -23,7 +23,7 @@
 <meta http-equiv="refresh" content="60; url=<?= $e($url('/v1/app/status?auto=1')) ?>">
 <?php endif; ?>
 <script src="<?= $e($url('/v1/app/dashboard.js')) ?>" defer></script>
-<title><?= $e(($title !== null ? $title . ' · ' : '') . 'Mailpit Dashboard') ?></title>
+<title><?= $e(($title !== null ? $title . ' · ' : '') . 'Amnesic Mail') ?></title>
 <style>
 :root {
     --bg: #f6f7f9; --surface: #fff; --text: #1d2330; --muted: #667085; --border: #e3e6eb;
@@ -161,7 +161,7 @@ svg.chart .unknown, .swatch.unknown { fill: var(--muted); background: var(--mute
 <?php if ($admin !== null): ?>
 <header>
     <div class="bar">
-        <a class="brand" href="<?= $e($url('/v1/app/messages')) ?>">Mailpit Dashboard</a>
+        <a class="brand" href="<?= $e($url('/v1/app/messages')) ?>">Amnesic Mail</a>
         <nav>
             <a href="<?= $e($url('/v1/app/messages')) ?>" class="<?= in_array($page, ['messages', 'message'], true) ? 'active' : '' ?>">Messages</a>
             <a href="<?= $e($url('/v1/app/tokens')) ?>" class="<?= in_array($page, ['tokens', 'token'], true) ? 'active' : '' ?>">Tokens</a>

@@ -351,7 +351,7 @@ final class DashboardTest extends AppTestCase
         foreach (['/v1/app/messages/inconnu' => 'Mail inconnu.', '/v1/app/tokens/999' => 'Jeton inconnu.'] as $path => $message) {
             $body = self::assertErrorPage(404, $this->request('GET', $path, ip: self::OTHER_IP), $path);
 
-            self::assertStringContainsString('<title>Page introuvable · Mailpit Dashboard</title>', $body, $path);
+            self::assertStringContainsString('<title>Page introuvable · Amnesic Mail</title>', $body, $path);
             self::assertStringContainsString('<p>' . $message . '</p>', $body, $path);
             // Administrateur connecté : le menu est là.
             self::assertStringContainsString('Déconnexion', $body, $path);

@@ -88,7 +88,7 @@ Pages HTML pour les administrateurs, dans un navigateur. Voir [Dashboard](#dashb
 |---|---|
 | `/v1/app/signin` | Connexion |
 | `/v1/app/messages` | Tous les mails, 50 par page. Filtres : adresses destinataires (`?address[]=…`, plusieurs possibles), ordre (`?sort=asc` : du plus ancien au plus récent), page (`?page=2`) |
-| `/v1/app/messages/{id}` | Un mail : expéditeur, destinataires, dates, corps HTML et texte, en-têtes, pièces jointes |
+| `/v1/app/messages/{id}` | Un mail, en onglets : **Mail** (par défaut ; version texte, `?view=html` pour le HTML), **Pièces jointes** (`?tab=attachments`), **En-têtes** (`?tab=headers`) |
 | `/v1/app/messages/{id}/html` | Corps HTML du mail seul, isolé (affiché dans la page précédente) |
 | `/v1/app/messages/{id}/parts/{partId}` | Téléchargement d'une pièce jointe ou d'une image intégrée |
 | `/v1/app/messages/delete` (`POST`) | Supprime les mails cochés dans la liste |
@@ -360,7 +360,12 @@ SELECT subject, headers->>'$."X-Mailer"[0]' AS mailer FROM mailpit_messages ORDE
 
   Les filtres sont dans l'URL : la pagination et le retour depuis un mail les conservent, et une liste filtrée peut être mise en favori.
   **Suppression** : cochez des mails (la case de l'en-tête coche toute la page), puis **Supprimer la sélection (N)**. Le navigateur demande confirmation. On revient ensuite sur la même liste, mêmes filtres.
-- **Un mail** (clic sur sa date ou son sujet) : tous ses champs, le corps HTML et la version texte, les en-têtes, et les pièces jointes avec un lien **Télécharger** (nom de fichier d'origine). Une pièce trop volumineuse (`too_large`) ou pas encore reçue est listée, sans lien. Le bouton **Supprimer ce mail** le supprime, après confirmation, et ramène à la liste.
+- **Un mail** (clic sur sa date ou son sujet), en trois onglets :
+  - **Mail** : expéditeur, destinataires (`To`, `Cc`, `Bcc`), `Répondre à`, dates (en-tête `Date`, réception par Mailpit et par l'API), taille, tags, identifiants, puis le contenu en **version texte**. Le bouton **HTML** affiche la version HTML à la place (seule version affichée si le mail n'a pas de texte) ;
+  - **Pièces jointes (N)** : pièces jointes et images intégrées, avec un lien **Télécharger** (nom de fichier d'origine). Une pièce trop volumineuse (`too_large`) ou pas encore reçue est listée, sans lien ;
+  - **En-têtes (N)** : tous les en-têtes du mail, dans l'ordre.
+
+  Chaque onglet a sa propre URL. Le bouton **Supprimer ce mail**, au-dessus des onglets, le supprime après confirmation et ramène à la liste.
 
 Une suppression efface le mail de la base (pièces jointes et destinataires compris) et ses fichiers dans `var/messages/`, comme `DELETE /v1/messages/{id}` côté jetons. Le mail reste dans **Mailpit**. Si le relais l'y renvoyait (mail pas encore complet au moment de la suppression), il réapparaîtrait.
 - **Tokens** : création (un nom suffit) et suppression des jetons développeurs. Un jeton supprimé est refusé (`401`) dès l'appel suivant.

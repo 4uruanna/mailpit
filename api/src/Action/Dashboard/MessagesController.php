@@ -17,7 +17,7 @@ use Slim\Psr7\Stream;
 
 /**
  * GET /v1/app/messages                          tous les mails, 50 par page, filtrables (voir MessageFilter)
- * GET /v1/app/messages/{id}                     un mail : en-têtes, corps, pièces jointes
+ * GET /v1/app/messages/{id}                     un mail, en onglets (?tab=) : mail, attachments, headers
  * GET /v1/app/messages/{id}/html                corps HTML du mail, affiché dans un cadre isolé (iframe)
  * GET /v1/app/messages/{id}/parts/{partId}      téléchargement d'une pièce jointe
  * POST /v1/app/messages/delete                  supprime les mails cochés dans la liste (champ ids[])
@@ -29,6 +29,9 @@ use Slim\Psr7\Stream;
 final readonly class MessagesController
 {
     public const int PER_PAGE = 50;
+
+    /** Onglets de la page d'un mail (?tab=…). Le premier est celui par défaut. */
+    public const array TABS = ['mail', 'attachments', 'headers'];
 
     /** Nombre maximal de mails supprimés en une fois. */
     public const int MAX_DELETE = 500;
@@ -72,9 +75,24 @@ final readonly class MessagesController
         $message = $this->message($request, $args['id']);
         $query = $request->getQueryParams();
 
+        $tab = in_array($query['tab'] ?? null, self::TABS, true) ? $query['tab'] : self::TABS[0];
+
+        // Onglet Mail : version texte par défaut ; la version HTML reste accessible (?view=html).
+        $hasText = is_string($message['text']) && $message['text'] !== '';
+        $hasHtml = is_string($message['html']) && $message['html'] !== '';
+        $view = match (true) {
+            $hasHtml && (($query['view'] ?? '') === 'html' || !$hasText) => 'html',
+            $hasText                                                     => 'text',
+            default                                                      => 'none',
+        };
+
         return $this->view->render('message', [
             'message'      => $message,
             'filter'       => MessageFilter::fromQuery($query),
+            'tab'          => $tab,
+            'content'      => $view,
+            'hasText'      => $hasText,
+            'hasHtml'      => $hasHtml,
             'remoteImages' => ($query['images'] ?? '') === '1',
         ], title: $message['subject'] !== '' ? $message['subject'] : '(sans sujet)');
     }

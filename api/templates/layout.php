@@ -73,6 +73,17 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 th.check, td.check { width: 1%; padding-right: 0; }
 th.check input, td.check input { width: 16px; height: 16px; margin: 3px 0 0; cursor: pointer; }
 tr.selected td { background: var(--code-bg); }
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 20px; overflow-x: auto; }
+.tabs a { padding: 10px 14px; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+.tabs a:hover { color: var(--text); text-decoration: none; }
+.tabs a.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+.content-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 28px 0 12px; flex-wrap: wrap; }
+.content-head h2 { margin: 0; }
+.switch { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.switch a { padding: 5px 14px; color: var(--muted); font-size: 14px; }
+.switch a + a { border-left: 1px solid var(--border); }
+.switch a:hover { text-decoration: none; color: var(--text); }
+.switch a.active { background: var(--accent); color: var(--accent-text); }
 form.inline { display: inline; margin: 0; }
 .row { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
 .row > .grow { flex: 1; min-width: 220px; }

@@ -55,8 +55,9 @@ final readonly class MessageFilter
      * Chaîne de requête (avec « ? », ou vide) reproduisant ces filtres.
      *
      * @param array{page?: int, oldestFirst?: bool} $override
+     * @param array<string, string|null> $extra paramètres ajoutés (ex. ['tab' => 'headers']) ; null = absent
      */
-    public function query(array $override = []): string
+    public function query(array $override = [], array $extra = []): string
     {
         $page = $override['page'] ?? $this->page;
         $oldestFirst = $override['oldestFirst'] ?? $this->oldestFirst;
@@ -65,7 +66,7 @@ final readonly class MessageFilter
             'address' => $this->addresses,
             'sort'    => $oldestFirst ? 'asc' : null,
             'page'    => $page > 1 ? $page : null,
-        ], static fn (mixed $value): bool => $value !== null && $value !== []);
+        ] + $extra, static fn (mixed $value): bool => $value !== null && $value !== []);
 
         return $params === [] ? '' : '?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986);
     }

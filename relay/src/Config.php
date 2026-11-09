@@ -20,12 +20,10 @@ final readonly class Config
         public string $mailpitUrl,
         /** Identifiants de MP_UI_AUTH (« utilisateur:motdepasse »), null si pas d'authentification. */
         public ?string $mailpitAuth,
-        /** URL du hook de l'API (sans jeton : il est envoyé dans l'en-tête Authorization). */
-        public string $targetUrl,
+        /** Adresse de base de l'API, sans « / » final (ex. https://api.mondomaine.fr). */
+        public string $apiUrl,
         /** Jeton partagé avec l'API (webhook.token dans son config.php). */
         public string $apiToken,
-        /** Envoyer aussi le mail brut (.eml). */
-        public bool $includeRaw,
         /** Délai maximal d'une requête HTTP (secondes). */
         public int $timeout,
         /** Remettre en « non lu » dans Mailpit les messages que le relais a lus. */
@@ -49,12 +47,18 @@ final readonly class Config
 
     public static function fromEnv(): self
     {
-        $target = self::env('RELAY_TARGET_URL');
-        if ($target === null || !preg_match('#^https?://#i', $target) || filter_var($target, FILTER_VALIDATE_URL) === false) {
-            throw new InvalidArgumentException('RELAY_TARGET_URL manquante ou invalide (ex. https://api.mondomaine.fr/hook/mailpit)');
+        if (self::env('RELAY_TARGET_URL') !== null) {
+            throw new InvalidArgumentException(
+                'RELAY_TARGET_URL n\'existe plus : remplacez-la par RELAY_API_URL, l\'adresse de base de l\'API (ex. https://api.mondomaine.fr)',
+            );
         }
-        if (parse_url($target, PHP_URL_QUERY) !== null || parse_url($target, PHP_URL_FRAGMENT) !== null) {
-            throw new InvalidArgumentException('RELAY_TARGET_URL ne doit pas contenir de « ?… » : le jeton va dans RELAY_API_TOKEN');
+
+        $api = self::env('RELAY_API_URL');
+        if ($api === null || !preg_match('#^https?://#i', $api) || filter_var($api, FILTER_VALIDATE_URL) === false) {
+            throw new InvalidArgumentException('RELAY_API_URL manquante ou invalide (ex. https://api.mondomaine.fr)');
+        }
+        if (parse_url($api, PHP_URL_QUERY) !== null || parse_url($api, PHP_URL_FRAGMENT) !== null) {
+            throw new InvalidArgumentException('RELAY_API_URL ne doit pas contenir de « ?… » : le jeton va dans RELAY_API_TOKEN');
         }
 
         $token = self::env('RELAY_API_TOKEN');
@@ -84,9 +88,8 @@ final readonly class Config
         return new self(
             mailpitUrl: $mailpit,
             mailpitAuth: $auth,
-            targetUrl: rtrim($target, '/'),
+            apiUrl: rtrim($api, '/'),
             apiToken: $token,
-            includeRaw: self::bool('RELAY_INCLUDE_RAW', false),
             timeout: self::int('RELAY_TIMEOUT', 60),
             keepUnread: self::bool('RELAY_KEEP_UNREAD', true),
             pollInterval: self::int('RELAY_POLL_INTERVAL', 30),
@@ -109,12 +112,11 @@ final readonly class Config
     public function describe(): string
     {
         return sprintf(
-            'Mailpit=%s (auth %s), API=%s (jeton %s…), mail brut=%s, recherche « %s » toutes les %d s',
+            'Mailpit=%s (auth %s), API=%s (jeton %s…), recherche « %s » toutes les %d s',
             $this->mailpitUrl,
             $this->mailpitAuth === null ? 'non' : 'oui',
-            $this->targetUrl,
+            $this->apiUrl,
             substr($this->apiToken, 0, 4),
-            $this->includeRaw ? 'oui' : 'non',
             $this->pendingQuery(),
             $this->pollInterval,
         );

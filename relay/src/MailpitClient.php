@@ -67,16 +67,6 @@ final readonly class MailpitClient
     }
 
     /**
-     * Mail brut (.eml), pièces jointes comprises.
-     *
-     * @throws TransientException
-     */
-    public function raw(string $id, int $maxSize): ?string
-    {
-        return $this->get('/api/v1/message/' . rawurlencode($id) . '/raw', $maxSize);
-    }
-
-    /**
      * Remplace les tags du message (l'API de Mailpit ne sait que remplacer la liste complète).
      *
      * @param list<string> $tags

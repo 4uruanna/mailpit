@@ -1,6 +1,6 @@
 # Relais Mailpit → API
 
-Petit service **PHP 8.5**, sans dépendance, qui tourne dans **Podman** sur le même serveur que Mailpit. Il transmet à l'[API](../api/README.md) le **mail complet** (en-têtes, texte, HTML, pièces jointes, images intégrées et, en option, le `.eml`), alors que le webhook de Mailpit n'envoie qu'un résumé.
+Petit service **PHP 8.5**, sans dépendance, qui tourne dans **Podman** sur le même serveur que Mailpit. Il transmet à l'[API](../api/README.md) le **mail complet** (en-têtes, texte, HTML, pièces jointes et images intégrées), alors que le webhook de Mailpit n'envoie qu'un résumé.
 
 ```
 Mailpit ── webhook ──► relais : « il y a du nouveau » (le contenu du webhook est ignoré)
@@ -8,8 +8,8 @@ Mailpit ── webhook ──► relais : « il y a du nouveau » (le contenu du
    │  1. recherche les mails sans le tag « relayed »
    │  2. lit le mail complet et ses pièces
    └─ 4. pose le tag « relayed »
-                         │ 3. POST  /hook/mailpit                      (JSON du mail)
-                         │    PUT   /hook/mailpit/{ID}/parts/{PartID}  (une requête par pièce, avec SHA-256)
+                         │ 3. POST /v1/messages                      (JSON du mail)
+                         │    POST /v1/messages/{id}/part/{partId}   (une requête par pièce, avec SHA-256)
                          ▼    Authorization: Bearer <RELAY_API_TOKEN>
                 https://api.mondomaine.fr ── répond "complete": true quand tout est enregistré
 ```
@@ -43,11 +43,10 @@ Variables d'environnement (voir `relay.env.example`) :
 
 | Variable | Défaut | Rôle |
 |---|---|---|
-| `RELAY_TARGET_URL` | *(obligatoire)* | URL du hook de l'API, **sans** `?token=…` |
+| `RELAY_API_URL` | *(obligatoire)* | adresse de base de l'API (ex. `https://api.mondomaine.fr`), **sans** `/v1/messages` ni `?token=…` |
 | `RELAY_API_TOKEN` | *(obligatoire)* | jeton partagé avec l'API (`webhook.token`), 32 caractères minimum |
 | `RELAY_MAILPIT_URL` | `http://mailpit:8025` | Mailpit vu depuis le conteneur |
 | `RELAY_MAILPIT_AUTH` | *(aucun)* | identifiants `MP_UI_AUTH` au format `utilisateur:motdepasse` |
-| `RELAY_INCLUDE_RAW` | `false` | envoie aussi le mail brut (`.eml`) |
 | `RELAY_POLL_INTERVAL` | `30` | secondes entre deux recherches, en l'absence de webhook |
 | `RELAY_TAG_DONE` | `relayed` | tag posé dans Mailpit quand l'API a tout enregistré |
 | `RELAY_TAG_FAILED` | `relay-failed` | tag posé quand l'API refuse définitivement un mail |
@@ -73,15 +72,12 @@ Variables d'environnement (voir `relay.env.example`) :
   "Headers": { "Received": ["…", "…"], "X-Mailer": ["…"] },
   "Parts": [
     { "PartID": "1.2", "Kind": "inline", "FileName": "logo.png", "ContentType": "image/png", "ContentID": "logo123", "Size": 2048 },
-    { "PartID": "2", "Kind": "attachment", "FileName": "devis.pdf", "ContentType": "application/pdf", "ContentID": "", "Size": 123456 },
-    { "PartID": "raw", "Kind": "raw", "FileName": "Wdyx4jVvBWELmoNePrh8Ff.eml", "ContentType": "message/rfc822", "ContentID": "", "Size": 130000 }
+    { "PartID": "2", "Kind": "attachment", "FileName": "devis.pdf", "ContentType": "application/pdf", "ContentID": "", "Size": 123456 }
   ]
 }
 ```
 
-La pièce `raw` n'est présente que si `RELAY_INCLUDE_RAW=true`.
-
-**2. Les pièces** que l'API réclame dans sa réponse (`"missing"`), une par requête `PUT`, en binaire, avec l'en-tête `X-Content-SHA256`. L'API ne réclame pas les pièces au-delà de sa limite (5 Mo par défaut) : elle les liste dans `"too_large"`, et le relais l'écrit dans ses logs.
+**2. Les pièces** que l'API réclame dans sa réponse (`"missing"`), une par requête `POST /v1/messages/{id}/part/{partId}`, en binaire, avec l'en-tête `X-Content-SHA256`. L'API ne réclame pas les pièces au-delà de sa limite (5 Mo par défaut) : elle les liste dans `"too_large"`, et le relais l'écrit dans ses logs.
 
 **Réponses de l'API :**
 

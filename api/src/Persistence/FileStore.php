@@ -8,11 +8,10 @@ use Psr\Http\Message\StreamInterface;
 use RuntimeException;
 
 /**
- * Enregistre en fichiers, hors de la base, les pièces jointes et les mails bruts (.eml) :
- * ils peuvent être lourds pour une base mutualisée.
+ * Enregistre en fichiers, hors de la base, les pièces jointes : elles peuvent être lourdes
+ * pour une base mutualisée.
  *
  *   <storage_dir>/<ID Mailpit>/part-<PartID>   pièce jointe ou image intégrée
- *   <storage_dir>/<ID Mailpit>/message.eml     mail brut
  *
  * Le nom d'origine de la pièce jointe est gardé en base : sur le disque, seuls des noms
  * déjà validés (ID Mailpit, PartID) sont utilisés. Le dossier par défaut (var/messages)
@@ -34,7 +33,7 @@ final readonly class FileStore
     /** Nom du fichier d'une pièce, relatif au dossier de stockage. */
     public static function partPath(string $mailpitId, string $partId): string
     {
-        return $partId === 'raw' ? $mailpitId . '/message.eml' : $mailpitId . '/part-' . $partId;
+        return $mailpitId . '/part-' . $partId;
     }
 
     /**
@@ -115,12 +114,11 @@ final readonly class FileStore
     }
 
     /**
-     * Efface les fichiers d'un mail supprimé de la base : son dossier, et le .eml
-     * des anciennes versions (enregistré à la racine du dossier de stockage).
+     * Efface les fichiers d'un mail supprimé de la base (son dossier).
      *
      * @return bool false si un fichier n'a pas pu être effacé
      */
-    public function deleteMessage(string $mailpitId, ?string $rawFile): bool
+    public function deleteMessage(string $mailpitId): bool
     {
         // ID Mailpit déjà validé à l'enregistrement : jamais de « / » ni de « .. ».
         if (!preg_match('/^[A-Za-z0-9_-]{1,64}$/', $mailpitId)) {
@@ -136,11 +134,6 @@ final readonly class FileStore
                 }
             }
             $ok = @rmdir($dir) && $ok;
-        }
-
-        $legacy = $this->directory . '/' . $mailpitId . '.eml';
-        if ($rawFile === $mailpitId . '.eml' && is_file($legacy)) {
-            $ok = @unlink($legacy) && $ok;
         }
 
         return $ok;

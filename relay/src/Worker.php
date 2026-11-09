@@ -126,7 +126,7 @@ final class Worker
         // La lecture via l'API de Mailpit marque le message comme lu : on rétablira l'état d'origine.
         $wasUnread = ($summary['Read'] ?? false) === false;
 
-        $parts = $this->parts($id, $message, (int) ($summary['Size'] ?? 0));
+        $parts = $this->parts($message);
         $payload = $summary;
         unset($payload['Read']);
         $payload['ReturnPath'] = is_string($message['ReturnPath'] ?? null) ? $message['ReturnPath'] : (string) ($summary['ReturnPath'] ?? '');
@@ -178,12 +178,12 @@ final class Worker
     }
 
     /**
-     * Pièces du mail, indexées par PartID : images intégrées, pièces jointes et, si demandé, mail brut.
+     * Pièces du mail, indexées par PartID : images intégrées et pièces jointes.
      *
      * @param array<string, mixed> $message
      * @return array<string, array{PartID: string, Kind: string, FileName: string, ContentType: string, ContentID: string, Size: int, SHA256: ?string}>
      */
-    private function parts(string $id, array $message, int $messageSize): array
+    private function parts(array $message): array
     {
         $parts = [];
         foreach (['inline' => 'Inline', 'attachment' => 'Attachments'] as $kind => $key) {
@@ -205,18 +205,6 @@ final class Worker
             }
         }
 
-        if ($this->config->includeRaw) {
-            $parts['raw'] = [
-                'PartID'      => 'raw',
-                'Kind'        => 'raw',
-                'FileName'    => $id . '.eml',
-                'ContentType' => 'message/rfc822',
-                'ContentID'   => '',
-                'Size'        => max(0, $messageSize),
-                'SHA256'      => null,
-            ];
-        }
-
         return $parts;
     }
 
@@ -231,9 +219,7 @@ final class Worker
         // Sans description (pièce annoncée lors d'un envoi précédent), la taille du mail sert de borne.
         $maxSize = max($part['Size'] ?? 0, $messageSize) + self::DOWNLOAD_MARGIN;
 
-        $content = $partId === 'raw'
-            ? $this->mailpit->raw($id, $maxSize)
-            : $this->mailpit->part($id, $partId, $maxSize);
+        $content = $this->mailpit->part($id, $partId, $maxSize);
         if ($content === null) {
             throw new TransientException(sprintf('pièce %s introuvable dans Mailpit', $partId));
         }

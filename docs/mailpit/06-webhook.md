@@ -134,9 +134,6 @@ On y trouve aussi les champs `Cc`, `Bcc`, `ReplyTo`, `ReturnPath` et `Username`.
 ```bash
 # Contenu décodé (texte, HTML, liste des pièces jointes…) en JSON
 curl -s -u admin http://127.0.0.1:8025/api/v1/message/ID_DU_MAIL
-
-# Mail brut (format .eml)
-curl -s -u admin http://127.0.0.1:8025/api/v1/message/ID_DU_MAIL/raw
 ```
 
 > ℹ️ L'API n'écoute que sur `127.0.0.1:8025` du serveur ([Partie 1, étape 4](01-podman.md#étape-4--créer-le-service-systemd-quadlet)). Un service hébergé ailleurs ne peut donc pas l'appeler directement : soit il se contente du résumé, soit il tourne sur le serveur, soit vous exposez l'interface derrière un reverse proxy (voir « Pour aller plus loin » en [Partie 1](01-podman.md#pour-aller-plus-loin)).

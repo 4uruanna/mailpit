@@ -13,7 +13,7 @@ return [
     'debug' => false,
 
     // Préfixe des URL si l'API n'est pas à la racine du domaine (ex. '/api').
-    // Laisser vide pour https://api.amnesic.dev/hook/mailpit
+    // Laisser vide pour https://api.amnesic.dev/v1/messages
     'base_path' => '',
 
     // Fichier de log (erreurs PHP, requêtes refusées). null = log par défaut de l'hébergement.
@@ -55,15 +55,12 @@ return [
         // ⚠️ L'hébergement doit accepter des requêtes de cette taille (voir le README).
         'max_attachment_size' => 5 * 1024 * 1024,
 
-        // Taille maximale du mail brut (.eml), si le relais l'envoie (RELAY_INCLUDE_RAW=true).
-        'max_raw_size' => 25 * 1024 * 1024,
-
         // Nombre de mails gardés : à chaque nouveau mail, les plus anciens au-delà de
         // cette limite sont supprimés (base ET fichiers). Même valeur que MP_MAX_MESSAGES
         // de Mailpit, pour garder les mêmes mails des deux côtés. 0 = sans limite.
         'max_messages' => 1000,
 
-        // Dossier des pièces jointes et des mails bruts : un sous-dossier par mail.
+        // Dossier des pièces jointes : un sous-dossier par mail.
         // Il doit être accessible en écriture par PHP, et jamais servi par le web.
         'storage_dir' => __DIR__ . '/var/messages',
     ],

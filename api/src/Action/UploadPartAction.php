@@ -14,8 +14,8 @@ use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 
 /**
- * PUT /hook/mailpit/{id}/parts/{partId} : contenu d'une pièce annoncée dans « Parts »
- * (pièce jointe, image intégrée, ou mail brut avec le PartID « raw »).
+ * POST /v1/messages/{id}/part/{partId} : contenu d'une pièce annoncée dans « Parts »
+ * (pièce jointe ou image intégrée).
  *
  * Corps : le contenu binaire, tel quel (Content-Type: application/octet-stream).
  * En-tête obligatoire : X-Content-SHA256 (empreinte SHA-256 du contenu, en hexadécimal).
@@ -35,7 +35,6 @@ final readonly class UploadPartAction
         private FileStore $files,
         private ResponseFactoryInterface $responseFactory,
         private int $maxPartSize,
-        private int $maxRawSize,
     ) {
     }
 
@@ -60,7 +59,7 @@ final readonly class UploadPartAction
 
         $part = $this->repository->findPart($id, $partId);
         if ($part === null) {
-            return $this->error(404, 'pièce inconnue : envoyez d\'abord le message (POST /hook/mailpit)');
+            return $this->error(404, 'pièce inconnue : envoyez d\'abord le message (POST /v1/messages)');
         }
 
         if ($part['status'] === 'too_large') {
@@ -74,7 +73,7 @@ final readonly class UploadPartAction
             return $this->ok(200, 'already-stored', $id, $partId, $this->repository->completion($part['message_pk']));
         }
 
-        $limit = $part['kind'] === Part::KIND_RAW ? $this->maxRawSize : $this->maxPartSize;
+        $limit = $this->maxPartSize;
         $declaredLength = $request->getHeaderLine('Content-Length');
         if ($declaredLength !== '' && (int) $declaredLength > $limit) {
             return $this->error(413, sprintf('contenu au-delà de la limite (%d octets)', $limit));

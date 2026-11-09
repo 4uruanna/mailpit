@@ -3,10 +3,9 @@
 FROM docker.io/library/php:8.5-cli-alpine
 
 # pcntl : signaux (webhook reçu = SIGUSR1, arrêt propre = SIGTERM envoyé par podman stop).
-# memory_limit : une pièce jointe (5 Mo) ou un mail brut (25 Mo) est gardé en mémoire le temps de l'envoi.
+# memory_limit (128 Mo, valeur par défaut) : une pièce jointe (5 Mo max) est gardée en mémoire le temps de l'envoi.
 RUN docker-php-ext-install pcntl >/dev/null \
- && cp "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini" \
- && printf 'memory_limit = 256M\n' > "$PHP_INI_DIR/conf.d/relay.ini"
+ && cp "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini"
 
 COPY bin/ /app/bin/
 COPY public/ /app/public/

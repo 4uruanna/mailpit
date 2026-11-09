@@ -29,7 +29,7 @@ Chaque étape indique **où** la faire :
 - [x] [Phase 2](#phase-2--lapi-répond-au-serveur-mailpit) — L'API répond au serveur Mailpit
 - [x] [Phase 3](#phase-3--le-relais-démarre) — Le relais démarre
 - [x] [Phase 4](#phase-4--le-trajet-complet) — Le trajet complet : un mail arrive dans l'API
-- [ ] [Phase 5](#phase-5--les-pannes) — Les pannes : aucun mail perdu
+- [x] [Phase 5](#phase-5--les-pannes) — Les pannes : aucun mail perdu
 - [ ] [Phase 6](#phase-6--remise-en-ordre) — Remise en ordre
 
 ---
@@ -547,6 +547,8 @@ Notez ici chaque écart constaté et sa correction, au fil des essais.
 | 2026-11-09 | 5.1 | La boucle d'envoi semble bloquée : `$TO` était vide dans le terminal, et `swaks` attendait la saisie du destinataire (`To:`) | Commandes protégées par `${TO:?…}` : elles s'arrêtent tout de suite avec un message si `TO` est vide |
 | 2026-11-09 | 5.1 (suite) | Relais arrêté : 3 mails acceptés par Mailpit, 3 erreurs de webhook (attendues). Au redémarrage, les 3 mails sont enregistrés par l'API dans la même seconde. `status.php` : 0 / 0 | — |
 | 2026-11-09 | 5.2 | Faux jeton : `HTTP 401`, nouvel essai prévu dans 30 s, mail non tagué. Jeton rétabli : mail enregistré aussitôt après le redémarrage | — |
+| 2026-11-09 | 5.3 | Tag `relayed` retiré via l'API de Mailpit (`PUT /api/v1/tags`) : mail renvoyé, reconnu comme doublon (contrainte `uq_mailpit_id`), tag reposé. Total API : 22 | — |
+| 2026-11-09 | 5.4 | Redémarrage du serveur : relais démarré seul (13:42:33), mail `Apres reboot` enregistré par l'API, sans `WARN` ni `ERROR` | — |
 
 ---
 

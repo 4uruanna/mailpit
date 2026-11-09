@@ -13,7 +13,8 @@ use Psr\Http\Message\ServerRequestInterface;
 
 /**
  * GET  /v1/app/signin   formulaire de connexion
- * POST /v1/app/signin   connexion (3 échecs au plus par identifiant sur 30 minutes)
+ * POST /v1/app/signin   connexion (sur 30 minutes, 3 échecs au plus par identifiant depuis une même
+ *                        adresse, et 10 par adresse tous identifiants confondus : voir LoginThrottle)
  * POST /v1/app/signout  déconnexion
  */
 final readonly class SignInController
@@ -51,16 +52,16 @@ final readonly class SignInController
             'ok'      => $this->success($result['admin']),
             'blocked' => $this->failure(
                 $username,
-                sprintf('Trop de tentatives pour cet identifiant. Réessayez dans %d minute(s).', (int) ceil($result['retry_after'] / 60)),
+                sprintf(
+                    '%s Réessayez dans %d minute(s).',
+                    $result['limit'] === 'ip'
+                        ? 'Trop de tentatives depuis votre adresse.'
+                        : 'Trop de tentatives pour cet identifiant depuis votre adresse.',
+                    (int) ceil($result['retry_after'] / 60),
+                ),
                 429,
             )->withHeader('Retry-After', (string) $result['retry_after']),
-            default   => $this->failure(
-                $username,
-                $result['remaining'] > 0
-                    ? sprintf('Identifiant ou mot de passe incorrect. Encore %d essai(s) avant blocage de 30 minutes.', $result['remaining'])
-                    : 'Identifiant ou mot de passe incorrect. Identifiant bloqué pour 30 minutes.',
-                401,
-            ),
+            default   => $this->failure($username, self::invalidMessage($result['remaining'], $result['limit']), 401),
         };
     }
 
@@ -78,6 +79,20 @@ final readonly class SignInController
         $this->session->login($admin['id'], $admin['username']);
 
         return $this->view->redirect('/v1/app/messages');
+    }
+
+    /** @param 'username'|'ip' $limit limite la plus proche */
+    private static function invalidMessage(int $remaining, string $limit): string
+    {
+        if ($remaining > 0) {
+            return $limit === 'ip'
+                ? sprintf('Identifiant ou mot de passe incorrect. Encore %d essai(s) depuis votre adresse avant blocage de 30 minutes.', $remaining)
+                : sprintf('Identifiant ou mot de passe incorrect. Encore %d essai(s) avant blocage de 30 minutes.', $remaining);
+        }
+
+        return $limit === 'ip'
+            ? 'Identifiant ou mot de passe incorrect. Votre adresse est bloquée pour 30 minutes.'
+            : 'Identifiant ou mot de passe incorrect. Identifiant bloqué pour 30 minutes depuis votre adresse.';
     }
 
     private function failure(string $username, string $message, int $status): ResponseInterface

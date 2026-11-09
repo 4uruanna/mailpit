@@ -104,6 +104,36 @@ final class DashboardTest extends AppTestCase
         self::assertSame(1, (int) $this->scalar('SELECT COUNT(*) FROM mailpit_login_attempts'));
     }
 
+    public function testBlockedSignInMessages(): void
+    {
+        $this->createAdmin();
+        $csrf = self::csrf($this->request('GET', '/v1/app/signin', ip: self::OTHER_IP));
+        $insert = $this->pdo->prepare('INSERT INTO mailpit_login_attempts (username, ip, ip_key) VALUES (?, ?, ?)');
+
+        // 3 échecs pour admin depuis cette adresse : identifiant bloqué pour elle seule.
+        for ($i = 0; $i < 3; $i++) {
+            $insert->execute(['admin', self::OTHER_IP, self::OTHER_IP]);
+        }
+        $response = $this->request('POST', '/v1/app/signin', ip: self::OTHER_IP, form: ['_csrf' => $csrf, 'username' => 'admin', 'password' => self::PASSWORD]);
+        self::assertSame(429, $response->getStatusCode());
+        self::assertStringContainsString('Trop de tentatives pour cet identifiant depuis votre adresse.', (string) $response->getBody());
+        self::assertGreaterThan(1700, (int) $response->getHeaderLine('Retry-After'));
+
+        // 10 échecs depuis une autre adresse, sur des identifiants différents : adresse bloquée.
+        for ($i = 0; $i < 10; $i++) {
+            $insert->execute(['inconnu' . $i, '192.0.2.50', '192.0.2.50']);
+        }
+        $response = $this->request('POST', '/v1/app/signin', ip: '192.0.2.50', form: ['_csrf' => $csrf, 'username' => 'admin', 'password' => self::PASSWORD]);
+        self::assertSame(429, $response->getStatusCode());
+        self::assertStringContainsString('Trop de tentatives depuis votre adresse.', (string) $response->getBody());
+        self::assertNotSame('', $response->getHeaderLine('Retry-After'));
+
+        // Depuis une troisième adresse, l'administrateur se connecte.
+        $response = $this->request('POST', '/v1/app/signin', ip: '192.0.2.51', form: ['_csrf' => $csrf, 'username' => 'admin', 'password' => self::PASSWORD]);
+        self::assertSame(303, $response->getStatusCode());
+        self::assertSame('/v1/app/messages', $response->getHeaderLine('Location'));
+    }
+
     public function testSignedInAdminSeesMessagesAndNeedsCsrf(): void
     {
         $this->postMessage(self::payload('m1'));

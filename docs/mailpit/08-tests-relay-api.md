@@ -30,7 +30,7 @@ Chaque étape indique **où** la faire :
 - [x] [Phase 3](#phase-3--le-relais-démarre) — Le relais démarre
 - [x] [Phase 4](#phase-4--le-trajet-complet) — Le trajet complet : un mail arrive dans l'API
 - [x] [Phase 5](#phase-5--les-pannes) — Les pannes : aucun mail perdu
-- [ ] [Phase 6](#phase-6--remise-en-ordre) — Remise en ordre
+- [x] [Phase 6](#phase-6--remise-en-ordre) — Remise en ordre
 
 ---
 
@@ -575,6 +575,7 @@ Notez ici chaque écart constaté et sa correction, au fil des essais.
 | 2026-11-09 | 5.3 | Tag `relayed` retiré via l'API de Mailpit (`PUT /api/v1/tags`) : mail renvoyé, reconnu comme doublon (contrainte `uq_mailpit_id`), tag reposé. Total API : 22 | — |
 | 2026-11-09 | 5.4 | Redémarrage du serveur : relais démarré seul (13:42:33), mail `Apres reboot` enregistré par l'API, sans `WARN` ni `ERROR` | — |
 | 2026-11-09 | 6 | `RELAY_QUERY` retiré : les mails antérieurs aux tests sont envoyés à l'API | Phase 6 : le nettoyage de la base vise désormais la seule période des tests |
+| 2026-11-09 | 6 (suite) | Anciens mails relayés sans `WARN` ni `ERROR`, `status.php` : 0 / 0. Secrets du shell effacés, `debug => false`. `api.log` : uniquement les refus des tests (`[ip-filter]`, `[auth]`) et des robots qui scannent Internet (`/wp-login.php`, `/xmlrpc.php`…), tous refusés par le filtre IP. Aucune erreur PHP ni base de données | Vider `api.log` de temps en temps : les robots le remplissent |
 
 ---
 

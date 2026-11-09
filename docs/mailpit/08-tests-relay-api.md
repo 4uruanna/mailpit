@@ -27,7 +27,7 @@ Chaque étape indique **où** la faire :
 - [x] [Phase 0](#phase-0--point-de-départ) — Point de départ : Mailpit reçoit des mails
 - [x] [Phase 1](#phase-1--lapi-est-en-ligne) — L'API est en ligne et protégée
 - [x] [Phase 2](#phase-2--lapi-répond-au-serveur-mailpit) — L'API répond au serveur Mailpit
-- [ ] [Phase 3](#phase-3--le-relais-démarre) — Le relais démarre
+- [x] [Phase 3](#phase-3--le-relais-démarre) — Le relais démarre
 - [ ] [Phase 4](#phase-4--le-trajet-complet) — Le trajet complet : un mail arrive dans l'API
 - [ ] [Phase 5](#phase-5--les-pannes) — Les pannes : aucun mail perdu
 - [ ] [Phase 6](#phase-6--remise-en-ordre) — Remise en ordre
@@ -530,6 +530,7 @@ Notez ici chaque écart constaté et sa correction, au fil des essais.
 | 2026-11-09 | 3.1 | Build de l'image : `DNS: transient error`. ufw est en `deny (routed)` : rien ne sort des conteneurs, même vers `1.1.1.1` | `ufw route allow from 10.88.0.0/16` et `from 10.89.0.0/16`. Partie 7 complétée : règles ufw (étape 1), sous-réseau fixe `10.89.25.0/24` et règle SMTP entrante (étape 4) |
 | 2026-11-09 | 3.2 | Relais démarré, mais `Mailpit /api/v1/search : Resolving timed out` en boucle. `UFW BLOCK` des requêtes du relais vers `10.89.25.1:53` (DNS interne `aardvark-dns`, filtré comme trafic entrant) | `ufw allow` UDP et TCP 53 de `10.89.25.0/24` vers `10.89.25.1`. Ajouté à la Partie 7, étape 1 |
 | 2026-11-09 | 3.2 – 3.4 | Après les règles DNS : `mailpit` résolu (`10.89.25.2`), connexion au port 8025 OK, le mail `Phase 0` est enregistré par l'API au 1er essai. L'API n'autorisant que l'IPv4, le relais sort donc bien en IPv4 (étape 3.4 validée du même coup) | — |
+| 2026-11-09 | 3.3 – 3.5 | `/health` → `{"status":"ok"}`, `dns_enabled: true`, aucun port publié | — |
 
 ---
 

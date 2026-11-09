@@ -58,7 +58,7 @@ final class DashboardTest extends AppTestCase
 
     public function testPagesRedirectToSignInWhenNotSignedIn(): void
     {
-        foreach (['/v1/app', '/v1/app/messages', '/v1/app/tokens', '/v1/app/messages/m1'] as $path) {
+        foreach (['/v1/app', '/v1/app/messages', '/v1/app/tokens', '/v1/app/status', '/v1/app/messages/m1'] as $path) {
             $response = $this->request('GET', $path, ip: self::OTHER_IP);
 
             self::assertSame(303, $response->getStatusCode(), $path);
@@ -208,6 +208,87 @@ final class DashboardTest extends AppTestCase
         self::assertStringContainsString('https://api.test/v1/messages?address=', $body);
         self::assertStringContainsString('https://api.test/v1/messages/ID_DU_MAIL', $body);
         self::assertStringNotContainsString('http://api.test', $body);
+    }
+
+    public function testStatusPage(): void
+    {
+        $this->signIn();
+
+        // Aucun ping : la page l'explique.
+        $response = $this->request('GET', '/v1/app/status', ip: self::OTHER_IP);
+        $body = (string) $response->getBody();
+        self::assertSame(200, $response->getStatusCode());
+        self::assertStringContainsString('<span class="badge none">Aucun ping reçu</span>', $body);
+        self::assertStringContainsString('Aucune coupure sur les dernières 24 heures.', $body);
+
+        // Le relais envoie des pings toutes les 30 secondes depuis 10 minutes, après 5 minutes de coupure.
+        $insert = $this->pdo->prepare("INSERT INTO mailpit_health_pings (received_at, latency_ms, pending, failed, source_ip, label) VALUES (UTC_TIMESTAMP(6) - INTERVAL ? SECOND, ?, ?, ?, '203.0.113.10', 'mailpit-<prod>')");
+        $insert->execute([1200, 70, 0, 0]);
+        for ($ago = 900; $ago >= 0; $ago -= 30) {
+            $insert->execute([$ago, $ago === 900 ? null : 85 + $ago % 60, 3, 1]);
+        }
+        self::assertSame(200, $this->ping()->getStatusCode(), 'le ping du relais passe par la même application');
+
+        $response = $this->request('GET', '/v1/app/status', ip: self::OTHER_IP);
+        $body = (string) $response->getBody();
+        self::assertSame(200, $response->getStatusCode());
+        self::assertStringContainsString("script-src 'self'", $response->getHeaderLine('Content-Security-Policy'));
+        self::assertStringContainsString('<meta http-equiv="refresh" content="60; url=/v1/app/status?auto=1">', $body);
+        self::assertStringContainsString('class="active">Statut</a>', $body);
+        self::assertStringContainsString('<span class="badge ok">Connecté</span>', $body);
+        self::assertStringContainsString('instance « mailpit-&lt;prod&gt; »', $body, 'libellé échappé');
+        self::assertStringContainsString("<dt>Dernière latence</dt>\n        <dd>85 ms</dd>", $body);
+        self::assertStringContainsString("<dt>Mails en attente</dt>\n        <dd>3</dd>", $body);
+        self::assertStringContainsString("<dt>Mails refusés</dt>\n        <dd>1 <span class=\"muted\">", $body);
+        self::assertStringContainsString('depuis le premier ping, le ', $body);
+        self::assertStringContainsString('<svg class="chart"', $body);
+        self::assertStringContainsString('<desc id="latency-desc">', $body);
+        self::assertStringContainsString('1 coupure(s) de plus de 90 secondes sans ping, 5 min au total sur 24 heures.', $body);
+        self::assertStringNotContainsString('<script>', $body, 'aucun script en ligne');
+
+        // Les autres pages n'ont pas de rechargement automatique.
+        self::assertStringNotContainsString('http-equiv="refresh"', (string) $this->request('GET', '/v1/app/tokens', ip: self::OTHER_IP)->getBody());
+    }
+
+    public function testStatusAutoRefreshDoesNotExtendTheSession(): void
+    {
+        $this->signIn();
+        $lastActivity = time() - 600;
+        $_SESSION['last_activity'] = $lastActivity;
+
+        // Rechargement automatique (?auto=1) : page servie, mais ce n'est pas une activité.
+        self::assertSame(200, $this->browserRequest('/v1/app/status?auto=1')->getStatusCode());
+        self::assertSame($lastActivity, $_SESSION['last_activity']);
+
+        // Une vraie visite, elle, prolonge la session.
+        self::assertSame(200, $this->browserRequest('/v1/app/status')->getStatusCode());
+        self::assertGreaterThanOrEqual(time() - 5, $_SESSION['last_activity']);
+
+        // Rechargement automatique après la durée d'inactivité : session expirée, comme pour une visite.
+        $_SESSION['last_activity'] = time() - 365 * 86400;
+        $response = $this->browserRequest('/v1/app/status?auto=1');
+        self::assertSame(303, $response->getStatusCode());
+        self::assertSame('/v1/app/signin', $response->getHeaderLine('Location'));
+    }
+
+    /** Nouvelle requête du navigateur : la session est fermée, puis reprise grâce à son cookie. */
+    private function browserRequest(string $path): ResponseInterface
+    {
+        $id = (string) session_id();
+        session_write_close();
+        session_id($id);
+
+        return $this->request('GET', $path, ip: self::OTHER_IP);
+    }
+
+    /** Ping de santé du relais (POST /v1/health). */
+    private function ping(): ResponseInterface
+    {
+        return $this->request('POST', '/v1/health', [
+            'Authorization' => 'Bearer ' . self::RELAY_TOKEN,
+            'Content-Type'  => 'application/json',
+            'Mailpit-Label' => 'mailpit-<prod>',
+        ], '{"latency_ms":85,"pending":3,"failed":1}');
     }
 
     /** Taille actuelle du log des tests : ce qui est écrit ensuite se lit avec logSince(). */

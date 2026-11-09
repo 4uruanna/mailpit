@@ -10,6 +10,7 @@ namespace Relay;
  *
  *   POST {RELAY_API_URL}/v1/messages                     le mail (JSON) ; l'API répond avec les pièces attendues
  *   POST {RELAY_API_URL}/v1/messages/{id}/part/{partId}  le contenu d'une pièce, avec son SHA-256
+ *   POST {RELAY_API_URL}/v1/health                       ping de santé (bin/heartbeat.php, toutes les 30 s)
  */
 final readonly class ApiClient
 {
@@ -33,10 +34,7 @@ final readonly class ApiClient
      */
     public function postMessage(array $message, ?string $label): array
     {
-        $headers = ['Content-Type: application/json'];
-        if ($label !== null && $label !== '') {
-            $headers[] = 'Mailpit-Label: ' . str_replace(["\r", "\n"], '', $label);
-        }
+        $headers = ['Content-Type: application/json', ...$this->labelHeader($label)];
 
         $response = $this->send(
             'POST',
@@ -65,6 +63,40 @@ final readonly class ApiClient
         );
 
         return $this->state($response, sprintf('API (pièce %s)', $partId), self::PERMANENT_PART_ERRORS);
+    }
+
+    /**
+     * Ping de santé : la latence du ping précédent et les compteurs de Mailpit (null = inconnus).
+     * Renvoie la durée de l'aller-retour (millisecondes), que le ping suivant transmettra.
+     *
+     * @throws TransientException ping perdu ou refusé (réseau, 401, 403, 5xx…)
+     */
+    public function health(?int $latencyMs, ?int $pending, ?int $failed): int
+    {
+        $start = hrtime(true);
+        $response = $this->send(
+            'POST',
+            $this->config->apiUrl . '/v1/health',
+            ['Content-Type: application/json', ...$this->labelHeader($this->config->label)],
+            json_encode(['latency_ms' => $latencyMs, 'pending' => $pending, 'failed' => $failed], JSON_THROW_ON_ERROR),
+        );
+        $elapsed = intdiv(hrtime(true) - $start, 1_000_000);
+
+        if ($response['status'] < 200 || $response['status'] > 299) {
+            throw new TransientException(Http::describe($response, $response['status'] === 0 ? 'API injoignable' : 'API'));
+        }
+
+        return $elapsed;
+    }
+
+    /**
+     * En-tête Mailpit-Label (RELAY_LABEL), enregistré par l'API ; aucun si pas de libellé.
+     *
+     * @return list<string>
+     */
+    private function labelHeader(?string $label): array
+    {
+        return $label === null || $label === '' ? [] : ['Mailpit-Label: ' . str_replace(["\r", "\n"], '', $label)];
     }
 
     /**

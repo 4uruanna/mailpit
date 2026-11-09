@@ -21,7 +21,11 @@ final class Session
     ) {
     }
 
-    public function start(bool $secure): void
+    /**
+     * @param bool $touch false : requête automatique (rechargement de la page Statut), qui ne compte
+     *                    pas comme une activité : un onglet resté ouvert n'empêche pas la déconnexion.
+     */
+    public function start(bool $secure, bool $touch = true): void
     {
         if (session_status() === PHP_SESSION_ACTIVE) {
             return;
@@ -46,7 +50,9 @@ final class Session
             $_SESSION = [];
             $this->flash('message', ['type' => 'error', 'message' => 'Session expirée : reconnectez-vous.']);
         }
-        $_SESSION['last_activity'] = $now;
+        if ($touch || !isset($_SESSION['last_activity'])) {
+            $_SESSION['last_activity'] = $now;
+        }
     }
 
     /** Session démarrée pour cette requête (faux pour une URL inconnue sans cookie de session, par ex.). */

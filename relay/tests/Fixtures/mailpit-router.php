@@ -3,11 +3,11 @@
 declare(strict_types=1);
 
 /*
- * Faux Mailpit pour les tests du Worker (php -S … mailpit-router.php), avec l'état de
- * FakeState (variable d'environnement FAKE_STATE). Il reproduit les routes de l'API de Mailpit
- * utilisées par le relais :
+ * Faux Mailpit pour les tests du Worker et du ping de santé (php -S … mailpit-router.php), avec
+ * l'état de FakeState (variable d'environnement FAKE_STATE). Il reproduit les routes de l'API de
+ * Mailpit utilisées par le relais :
  *
- *   GET /api/v1/search?query=…&limit=…&start=…   résumés, du plus récent au plus ancien (filtre « !tag:… » seulement)
+ *   GET /api/v1/search?query=…&limit=…&start=…   résumés, du plus récent au plus ancien (filtres « !tag:… » et « tag:… » seulement)
  *   GET /api/v1/message/{id}                     mail complet (le marque comme lu, comme Mailpit)
  *   GET /api/v1/message/{id}/headers             en-têtes
  *   GET /api/v1/message/{id}/part/{partId}       contenu d'une pièce
@@ -65,6 +65,8 @@ if ($auth !== null && ($headers['authorization'] ?? '') !== 'Basic ' . base64_en
 if ($method === 'GET' && $path === '/api/v1/search') {
     preg_match_all('/!tag:(\S+)/', (string) ($query['query'] ?? ''), $match);
     $excluded = $match[1];
+    preg_match_all('/(?<![!\S])tag:(\S+)/', (string) ($query['query'] ?? ''), $match);
+    $included = $match[1];
     $all = $state->read()['mailpit']['messages'] ?? [];
     // « _arrives_after » : le mail n'apparaît qu'une fois ce mail-là reçu par la fausse API.
     $received = $state->read()['api']['messages'] ?? [];
@@ -74,7 +76,8 @@ if ($method === 'GET' && $path === '/api/v1/search') {
     );
     $found = array_values(array_filter(
         array_reverse($all),
-        static fn (array $message): bool => array_intersect($message['Tags'] ?? [], $excluded) === [],
+        static fn (array $message): bool => array_intersect($message['Tags'] ?? [], $excluded) === []
+            && array_diff($included, $message['Tags'] ?? []) === [],
     ));
     $start = (int) ($query['start'] ?? 0);
     $limit = (int) ($query['limit'] ?? 50);

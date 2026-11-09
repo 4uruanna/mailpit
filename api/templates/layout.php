@@ -18,6 +18,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
+<?php if ($page === 'status'): ?>
+<?php /* Rechargement chaque minute, marqué ?auto=1 : il ne prolonge pas la session (DashboardMiddleware). */ ?>
+<meta http-equiv="refresh" content="60; url=<?= $e($url('/v1/app/status?auto=1')) ?>">
+<?php endif; ?>
 <script src="<?= $e($url('/v1/app/dashboard.js')) ?>" defer></script>
 <title><?= $e(($title !== null ? $title . ' · ' : '') . 'Mailpit Dashboard') ?></title>
 <style>
@@ -132,6 +136,22 @@ details.block > summary { cursor: pointer; font-weight: 600; margin-bottom: 8px;
 details.block pre.mail-text { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
 table.headers th { width: 1%; color: var(--muted); font-weight: 600; font-size: 13px; }
 table.headers td { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; overflow-wrap: anywhere; }
+.badge { display: inline-block; padding: 3px 12px; border-radius: 12px; font-weight: 600; }
+.badge.ok { background: var(--ok-bg); color: var(--ok-text); }
+.badge.down { background: var(--err-bg); color: var(--err-text); }
+.badge.none { background: var(--code-bg); color: var(--muted); }
+.status-card p.status { font-size: 17px; margin: 0 0 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+svg.chart { display: block; width: 100%; height: auto; }
+svg.chart .grid, svg.chart .baseline { stroke: var(--border); stroke-width: 1; }
+svg.chart .baseline { stroke: var(--muted); }
+svg.chart .axis { fill: var(--muted); font-size: 12px; font-family: inherit; }
+svg.chart .bar, .swatch.bar { fill: var(--accent); background: var(--accent); }
+svg.chart .peak, .swatch.peak { fill: var(--accent); background: var(--accent); opacity: .3; }
+svg.chart .down, .swatch.down { fill: var(--danger); background: var(--danger); opacity: .35; }
+svg.chart .unknown, .swatch.unknown { fill: var(--muted); background: var(--muted); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 12px 0 0; font-size: 13px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.swatch { display: inline-block; width: 12px; height: 12px; border-radius: 2px; }
 </style>
 </head>
 <body>
@@ -142,6 +162,7 @@ table.headers td { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, m
         <nav>
             <a href="<?= $e($url('/v1/app/messages')) ?>" class="<?= in_array($page, ['messages', 'message'], true) ? 'active' : '' ?>">Messages</a>
             <a href="<?= $e($url('/v1/app/tokens')) ?>" class="<?= in_array($page, ['tokens', 'token'], true) ? 'active' : '' ?>">Tokens</a>
+            <a href="<?= $e($url('/v1/app/status')) ?>" class="<?= $page === 'status' ? 'active' : '' ?>">Statut</a>
         </nav>
         <div class="user">
             <span><?= $e($admin) ?></span>

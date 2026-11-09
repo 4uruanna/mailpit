@@ -16,7 +16,9 @@ use Throwable;
  * 3. Seulement quand l'API répond « complete », pose le tag RELAY_TAG_DONE dans Mailpit.
  *
  * Les mails sont traités strictement un par un : le message, puis ses pièces une à une, puis le tag,
- * avant de passer au mail suivant. Le relais n'envoie donc jamais deux requêtes en même temps à l'API.
+ * avant de passer au mail suivant. Le relais n'envoie donc jamais deux requêtes en même temps à l'API
+ * pour les mails. Seul le ping de santé (bin/heartbeat.php, voir Heartbeat) part à côté, depuis son
+ * propre processus.
  *
  * Tant que le tag n'est pas posé, le mail est réessayé (30 s, 1 min, 2 min… puis toutes les heures),
  * même après un redémarrage du relais : aucun mail ne peut être perdu en route. L'API ignore

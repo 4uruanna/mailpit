@@ -15,6 +15,7 @@ Le **relais** (dossier [`relay/`](../../relay/README.md) du dépôt) comble ce m
 │     └──── 4. tag « relayed » quand tout est reçu ─┤                   │
 └───────────────────────────────────────────────────┼───────────────────┘
                                                     │ 3. le mail (JSON), puis chaque pièce jointe
+                                                    │    + un ping de santé toutes les 30 s
                                                     │    Authorization: Bearer <jeton>
                                                     ▼
                                      https://api.mondomaine.fr/v1/messages
@@ -24,9 +25,10 @@ Ce que le relais apporte :
 
 - **Le mail complet** : en-têtes, texte, HTML, pièces jointes et images intégrées (5 Mo maximum par pièce, réglable côté API). Tout est enregistré par l'API : le relais ne garde rien.
 - **Aucun mail perdu.** Le relais ne pose le tag `relayed` sur un mail dans Mailpit qu'une fois que l'API a confirmé avoir **tout** enregistré. Tant que ce n'est pas le cas, il réessaie (30 s, 1 min, 2 min… puis toutes les heures, sans limite), y compris après un redémarrage. C'est Mailpit qui sert de file d'attente. Mailpit seul, lui, n'essaie qu'une fois.
-- **Un mail à la fois.** Le relais termine un mail (message, pièces jointes une par une, tag) avant de passer au suivant : il n'envoie jamais deux requêtes en même temps à l'API.
+- **Un mail à la fois.** Le relais termine un mail (message, pièces jointes une par une, tag) avant de passer au suivant : il n'envoie jamais deux requêtes en même temps à l'API pour les mails. Seul le ping de santé (ci-dessous) part à côté.
+- **Un ping de santé toutes les 30 secondes.** Depuis un processus à part, le relais envoie à l'API sa latence et le nombre de mails en attente et refusés. La page **Statut** du Dashboard de l'API montre ainsi si le relais est connecté, et ses coupures sur 24 heures.
 - **Les plus anciens d'abord.** Après une panne de l'API, le relais rattrape son retard du plus ancien au plus récent : ce sont les plus anciens que Mailpit supprime en premier. Un mail qui attend son nouvel essai ne bloque pas les suivants.
-- **7 jours et 1000 mails au plus, des deux côtés.** Mailpit (`MP_MAX_MESSAGES=1000` et `MP_MAX_AGE=7d`, [Partie 1](01-podman.md#étape-3--créer-le-fichier-de-configuration-de-mailpit)) et l'API (`webhook.max_messages` et `webhook.max_age_days`) suppriment les plus anciens au-delà de 1000, et ceux reçus il y a plus de 7 jours. Côté API, ce nettoyage a lieu après les requêtes du relais, au plus toutes les 15 minutes : aucune tâche planifiée à créer sur l'hébergement.
+- **7 jours et 1000 mails au plus, des deux côtés.** Mailpit (`MP_MAX_MESSAGES=1000` et `MP_MAX_AGE=7d`, [Partie 1](01-podman.md#étape-3--créer-le-fichier-de-configuration-de-mailpit)) et l'API (`webhook.max_messages` et `webhook.max_age_days`) suppriment les plus anciens au-delà de 1000, et ceux reçus il y a plus de 7 jours. Côté API, ce nettoyage a lieu après les requêtes du relais (mails et pings de santé), au plus toutes les 15 minutes : aucune tâche planifiée à créer sur l'hébergement.
 - **Un jeton des deux côtés.** Le relais s'authentifie auprès de l'API avec un jeton configuré dans `relay.env` **et** dans le `config.php` de l'API, envoyé dans un en-tête (jamais dans l'URL : l'API refuse un `?token=…`, qui finirait dans les logs d'accès de l'hébergement).
 - **Rien n'est exposé.** L'interface de Mailpit reste sur `127.0.0.1`, et le relais n'ouvre aucun port sur le serveur.
 
@@ -169,6 +171,8 @@ sudo chmod 600 /etc/mailpit/relay.env
 
 > ℹ️ L'API enregistre les pièces jointes en fichiers dans son dossier `var/messages/`. Pensez à la taille : l'espace d'un hébergement mutualisé est limité.
 
+> 💡 Le relais envoie aussi un **ping de santé** à l'API toutes les 30 secondes : c'est lui qui alimente la page **Statut** de son Dashboard. Pour changer l'intervalle (60 secondes au plus : la page compte une coupure dès 90 secondes sans ping), ou le désactiver avec `0` : `RELAY_HEARTBEAT_INTERVAL` (voir le modèle complet). L'API doit avoir la table `mailpit_health_pings` (`sql/schema.sql`, ou la migration `sql/migrations/2026-11-health-pings.sql` pour une base plus ancienne).
+
 ## Étape 6 — Créer le service du relais
 
 ```bash
@@ -237,6 +241,8 @@ Les logs du relais doivent afficher une ligne `démarrage : écoute sur 0.0.0.0:
 sudo journalctl -u mailpit-relay -n 20
 ```
 
+Aucune ligne `ping de santé …` ne doit suivre : le relais n'écrit dans son journal que les échecs du ping (voir [Dépannage](#dépannage-relais)).
+
 Vérifiez que le réseau a bien la résolution de noms :
 
 ```bash
@@ -265,9 +271,15 @@ En une ou deux secondes, vous devez voir :
 
 Côté API, le mail apparaît dans la table `mailpit_messages` avec ses colonnes `text_body`, `headers` et `completed_at` remplies, et la pièce jointe dans la table `mailpit_parts` (état `stored`), avec son fichier dans `var/messages/<ID>/`. Dans l'interface de Mailpit, le mail porte le tag **relayed** et reste **non lu**.
 
+**Ping de santé** : dans le Dashboard de l'API (`https://api.mondomaine.fr/v1/app/status`, menu **Statut**), la page indique **Connecté**, avec la date du dernier ping (moins de 30 secondes), la latence, et **0** mail en attente. Le graphique se remplit au fil des minutes.
+
+> ⚠️ « Aucun ping reçu » : la table `mailpit_health_pings` manque côté API (migration `sql/migrations/2026-11-health-pings.sql`), ou l'API est une version précédente. Le journal du relais le dit (`ping de santé non enregistré : … HTTP 500` ou `HTTP 404`). Les mails, eux, sont relayés normalement.
+
 ---
 
 ## Au quotidien
+
+**État de la connexion** : page **Statut** du Dashboard de l'API. Connecté ou non, latence, mails en attente et refusés, disponibilité et coupures sur 24 heures, d'après le ping de santé que le relais envoie toutes les 30 secondes (`RELAY_HEARTBEAT_INTERVAL`, `0` pour le désactiver).
 
 **Mails en attente et mails refusés**, lus dans Mailpit :
 
@@ -337,6 +349,10 @@ Un arrêt du relais ne fait perdre **aucun** mail, même ceux arrivés pendant l
 | Relais : `API (message) injoignable : …` | Hébergement en panne, DNS ou certificat : le relais réessaie tout seul |
 | Relais : `supprimé de Mailpit avant d'avoir été relayé` | Mail supprimé avant d'être relayé (à la main, ou par `MP_MAX_MESSAGES` / `MP_MAX_AGE`) : il ne peut plus être envoyé |
 | Relais : `Mailpit … : HTTP 400` sur la recherche | Filtre `RELAY_QUERY` mal écrit (syntaxe de recherche de Mailpit) |
+| Relais : `ping de santé non enregistré : …` | Le ping (`POST /v1/health`) a échoué. Même causes que pour les mails (`401` jeton, `403` IP, API injoignable…). `HTTP 404` : API d'une version précédente, sans cette route (mettez-la à jour). `HTTP 500` : migration `2026-11-health-pings.sql` pas importée. Écrit une fois, puis toutes les 10 minutes tant que ça dure ; `ping de santé de nouveau accepté` au retour |
+| Relais : `ping de santé envoyé sans les compteurs : …` | Mailpit ne répond pas au ping : la page **Statut** affiche « inconnu » pour les mails en attente et refusés. Mêmes causes que les erreurs `Mailpit …` ci-dessus |
+| Relais : `le ping de santé s'est arrêté`, puis redémarrage | Le processus du ping a planté : le relais s'arrête en erreur et systemd le redémarre. Si ça se répète, regardez les lignes juste avant dans le journal |
+| Page **Statut** de l'API : « Déconnecté depuis … » | Aucun ping depuis plus de 90 secondes : relais arrêté (`sudo systemctl status mailpit-relay`), serveur ou réseau coupé, ou API en panne. Le journal du relais dit lequel |
 
 > ℹ️ Vous utilisiez aussi `host.containers.internal` avec ufw (dépannage de la [Partie 6](06-webhook.md#dépannage-webhook)) ? Le réseau `mailpit` utilise le sous-réseau `10.89.25.0/24`, et non `10.88.0.0/16` : adaptez la règle ufw.
 

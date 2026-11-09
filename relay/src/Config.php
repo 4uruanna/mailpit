@@ -15,6 +15,9 @@ final readonly class Config
     /** Longueur minimale du jeton (même règle que l'API). */
     public const int MIN_TOKEN_LENGTH = 32;
 
+    /** Intervalle par défaut entre deux pings de santé (secondes). */
+    public const int HEARTBEAT_INTERVAL = 30;
+
     public function __construct(
         /** URL de Mailpit vue depuis le conteneur du relais. */
         public string $mailpitUrl,
@@ -42,6 +45,8 @@ final readonly class Config
         public string $listen,
         /** Nom de cette instance, envoyé à l'API dans l'en-tête Mailpit-Label (colonne mailpit_label), ou null. */
         public ?string $label = null,
+        /** Intervalle entre deux pings de santé (POST /v1/health, secondes) ; 0 = pas de ping. */
+        public int $heartbeatInterval = self::HEARTBEAT_INTERVAL,
     ) {
     }
 
@@ -100,6 +105,7 @@ final readonly class Config
             query: self::env('RELAY_QUERY') ?? '',
             listen: self::env('RELAY_LISTEN') ?? '0.0.0.0:8080',
             label: self::env('RELAY_LABEL'),
+            heartbeatInterval: self::int('RELAY_HEARTBEAT_INTERVAL', self::HEARTBEAT_INTERVAL, 0),
         );
     }
 
@@ -109,17 +115,24 @@ final readonly class Config
         return trim(sprintf('!tag:%s !tag:%s %s', $this->tagDone, $this->tagFailed, $this->query));
     }
 
+    /** Même configuration, avec un autre délai maximal par requête (ex. pings de santé). */
+    public function withTimeout(int $timeout): self
+    {
+        return new self(...[...get_object_vars($this), 'timeout' => $timeout]);
+    }
+
     /** Valeur sans les identifiants, pour les logs. */
     public function describe(): string
     {
         return sprintf(
-            'Mailpit=%s (auth %s), API=%s (jeton %s…), recherche « %s » toutes les %d s',
+            'Mailpit=%s (auth %s), API=%s (jeton %s…), recherche « %s » toutes les %d s, %s',
             $this->mailpitUrl,
             $this->mailpitAuth === null ? 'non' : 'oui',
             $this->apiUrl,
             substr($this->apiToken, 0, 4),
             $this->pendingQuery(),
             $this->pollInterval,
+            $this->heartbeatInterval === 0 ? 'ping de santé désactivé' : sprintf('ping de santé toutes les %d s', $this->heartbeatInterval),
         );
     }
 
@@ -161,14 +174,15 @@ final readonly class Config
         return $bool;
     }
 
-    private static function int(string $name, int $default): int
+    /** @param int $min 1, ou 0 quand 0 a un sens (ex. RELAY_HEARTBEAT_INTERVAL=0 : désactivé) */
+    private static function int(string $name, int $default, int $min = 1): int
     {
         $value = self::env($name);
         if ($value === null) {
             return $default;
         }
-        if (!ctype_digit($value) || (int) $value < 1) {
-            throw new InvalidArgumentException(sprintf('%s doit être un entier positif', $name));
+        if (!ctype_digit($value) || (int) $value < $min) {
+            throw new InvalidArgumentException(sprintf($min === 0 ? '%s doit être un entier positif ou nul' : '%s doit être un entier positif', $name));
         }
 
         return (int) $value;

@@ -4,7 +4,7 @@ Petite API **PHP 8.5 / Slim 4 / MySQL 8.4** pour un hébergement **OVH Perso**. 
 
 Elle comprend aussi :
 
-- un **Dashboard** pour les administrateurs (`/v1/app/…`) : liste de tous les mails, gestion des jetons développeurs ;
+- un **Dashboard** pour les administrateurs (`/v1/app/…`) : liste de tous les mails, gestion des jetons développeurs, état de la connexion du relais (page **Statut**) ;
 - des **jetons développeurs** : chacun lit (et supprime) par l'API les mails des adresses qui lui sont associées.
 
 ```
@@ -12,6 +12,7 @@ relais (serveur Mailpit) ── 1. POST /v1/messages                     mail en
         Authorization:  ◄── réponse : pièces attendues ("missing")
         Bearer <jeton>  ── 2. POST /v1/messages/{id}/part/{partId}   une requête par pièce ──► var/messages/{id}/…
                         ◄── réponse : "complete": true quand tout est enregistré  + table mailpit_parts
+                        ── POST /v1/health toutes les 30 s   ping de santé ──► table mailpit_health_pings (page Statut)
 
 développeurs ── GET /v1/messages, GET /v1/messages/{id}…  jeton « mpt_… » créé dans le Dashboard
 administrateurs ── https://api.amnesic.dev/v1/app/signin  Dashboard (identifiant + mot de passe)
@@ -21,7 +22,7 @@ Trois sortes d'accès :
 
 | Qui | Comment | Peut |
 |---|---|---|
-| **Relais** | IP dans `webhook.allowed_ips` (sinon `403`) **et** jeton `webhook.token` (sinon `401`). Ce jeton est configuré des deux côtés : dans `config.php` ici, et dans `RELAY_API_TOKEN` côté relais | **Seul** à pouvoir envoyer des mails (`POST`). Peut aussi lire tous les mails (`GET /v1/messages` et `GET /v1/messages/{id}`) |
+| **Relais** | IP dans `webhook.allowed_ips` (sinon `403`) **et** jeton `webhook.token` (sinon `401`). Ce jeton est configuré des deux côtés : dans `config.php` ici, et dans `RELAY_API_TOKEN` côté relais | **Seul** à pouvoir envoyer des mails et des pings de santé (`POST`). Peut aussi lire tous les mails (`GET /v1/messages` et `GET /v1/messages/{id}`) |
 | **Développeurs** | Jeton `mpt_…` créé dans le Dashboard, depuis n'importe quelle IP | Lire et supprimer les mails des adresses associées à son jeton |
 | **Administrateurs** | Identifiant et mot de passe (table `mailpit_admins`), depuis n'importe quelle IP. Sur 30 minutes : 3 essais par identifiant depuis une même adresse, 10 par adresse tous identifiants confondus | Voir tous les mails, créer et supprimer les jetons, leur associer des adresses |
 
@@ -50,7 +51,7 @@ api/
 │   ├── schema.sql       # tables MySQL, à importer une fois
 │   └── migrations/      # mises à jour d'une base créée avec une version précédente
 ├── src/                 # code de l'API
-├── templates/           # pages HTML du Dashboard (dont error.php : pages d'erreur)
+├── templates/           # pages HTML du Dashboard (dont error.php : pages d'erreur, status.php : page Statut)
 ├── tests/               # tests automatisés (voir « Tests automatisés »), inutiles sur l'hébergement
 ├── var/log/             # logs (accessible en écriture) : api.log, son archive api.log.1
 │                        # (rotation à 10 Mo) et api.log.lock (verrou de la rotation)
@@ -69,10 +70,11 @@ Elles exigent le jeton du relais, dans l'en-tête `Authorization: Bearer <jeton>
 |---|---|---|
 | `POST` | `/v1/messages` | Corps : le mail en JSON (voir ci-dessous).<br>`201 {"status":"created", "id":"…", "complete":false, "missing":["2","1.3"], "too_large":["4"]}` : message enregistré<br>`200 {"status":"updated"\|"duplicate", …}` : déjà reçu (même ID Mailpit), complété si besoin<br>`400` JSON invalide · `413` trop volumineux · `415` pas du JSON · `422` champ invalide |
 | `POST` | `/v1/messages/{id}/part/{partId}` | Corps : le contenu brut de la pièce (`Content-Type: application/octet-stream`), avec l'en-tête `X-Content-SHA256` (empreinte SHA-256 en hexadécimal).<br>`201 {"status":"stored", "complete":true, "missing":[], …}` : pièce enregistrée<br>`200 {"status":"already-stored", …}` : déjà reçue<br>`404` message ou pièce inconnus (ou mail supprimé pendant l'envoi : la pièce reçue est effacée) · `409` pièce `too_large`, ou déjà reçue avec un autre contenu · `413` au-delà de la limite · `415` mauvais Content-Type · `422` empreinte absente ou différente |
+| `POST` | `/v1/health` | Ping de santé, envoyé par le relais toutes les 30 secondes (voir [Page Statut](#page-statut)). Corps JSON, chaque champ entier ou `null` : `{"latency_ms":85, "pending":0, "failed":2}` (latence du ping précédent en ms, mails en attente et refusés dans Mailpit), 4 Ko au plus. En-tête `Mailpit-Label` facultatif.<br>`200 {"status":"ok", "time":"2026-11-09T08:31:20.474Z"}` : ping enregistré (heure de l'API, UTC)<br>`400` JSON invalide · `413` trop volumineux · `415` pas du JSON · `422` champ invalide (nombre négatif, décimal, texte…) |
 
-Pour les deux : `403` IP non autorisée (vérifiée en premier) · `401` jeton absent ou faux · `500` erreur serveur (base injoignable…).
+Pour les trois : `403` IP non autorisée (vérifiée en premier) · `401` jeton absent ou faux · `500` erreur serveur (base injoignable…).
 
-Après une requête acceptée du relais, l'API fait son [nettoyage](#rétention--7-jours-et-1000-mails-au-plus) si le dernier date de plus de 15 minutes. La réponse n'en dépend pas : une erreur de nettoyage est seulement écrite dans le log.
+Après une requête acceptée du relais (un mail, une pièce ou un ping de santé), l'API fait son [nettoyage](#rétention--7-jours-et-1000-mails-au-plus) si le dernier date de plus de 15 minutes. La réponse n'en dépend pas : une erreur de nettoyage est seulement écrite dans le log.
 
 Pour toutes les routes (relais, développeurs, Dashboard) : en `http://`, `301` vers la même URL en `https://` pour `GET` et `HEAD`, `403 {"error":"HTTPS obligatoire : renvoyez la requête en https://"}` pour les autres méthodes, avant toute autre vérification. Voir [HTTPS obligatoire](#https-obligatoire).
 
@@ -108,6 +110,7 @@ Pages HTML pour les administrateurs, dans un navigateur. Voir [Dashboard](#dashb
 | `/v1/app/dashboard.js` | Script des pages (confirmations, sélection), servi depuis `templates/` |
 | `/v1/app/tokens` | Liste des jetons, création, suppression |
 | `/v1/app/tokens/{id}` | Détail d'un jeton : associer et retirer des adresses |
+| `/v1/app/status` | **Statut** : connexion du relais sur les dernières 24 heures (voir [Page Statut](#page-statut)) |
 
 Toute autre URL renvoie `404`. Les erreurs (`404`, `405`, `500`…) ont deux formes, selon l'URL :
 
@@ -192,7 +195,7 @@ curl -6 -s https://ifconfig.me; echo
 
 ### 2. Créer les tables
 
-Espace client OVH → **Bases de données** → **…** → **Aller sur phpMyAdmin**. Sélectionnez la base dans la colonne de gauche, puis onglet **Importer** → fichier `sql/schema.sql`. Il crée les tables `mailpit_messages`, `mailpit_parts` et `mailpit_message_recipients` (mails), `mailpit_admins` et `mailpit_login_attempts` (Dashboard), `mailpit_tokens` et `mailpit_token_addresses` (jetons développeurs).
+Espace client OVH → **Bases de données** → **…** → **Aller sur phpMyAdmin**. Sélectionnez la base dans la colonne de gauche, puis onglet **Importer** → fichier `sql/schema.sql`. Il crée les tables `mailpit_messages`, `mailpit_parts` et `mailpit_message_recipients` (mails), `mailpit_admins` et `mailpit_login_attempts` (Dashboard), `mailpit_tokens` et `mailpit_token_addresses` (jetons développeurs), `mailpit_health_pings` (pings de santé du relais, page **Statut**).
 
 > **Mise à jour d'une installation existante** : importez plutôt les fichiers de `sql/migrations/`, dans l'ordre, en sautant ceux déjà importés. Chacun peut être importé plusieurs fois sans risque.
 >
@@ -200,6 +203,7 @@ Espace client OVH → **Bases de données** → **…** → **Aller sur phpMyAdm
 > |---------|----------------------|---------------|
 > | `2026-11-dashboard-tokens.sql` | avant l'arrivée du Dashboard | Crée les nouvelles tables et y range les destinataires des mails déjà enregistrés |
 > | `2026-11-login-throttle-ip.sql` | avant la limitation des connexions par adresse | Ajoute la colonne `ip_key` et ses index à `mailpit_login_attempts` |
+> | `2026-11-health-pings.sql` | avant la page **Statut** | Crée la table `mailpit_health_pings` (pings de santé du relais) |
 >
 > ⚠️ La suppression des mails au bout de 7 jours ne demande aucune migration, mais elle s'applique **dès la mise à jour** : sans clé `max_age_days` dans votre `config.php`, les mails reçus il y a plus de 7 jours sont supprimés (base et pièces jointes) après la première requête du relais. Pour les garder, ajoutez `'max_age_days' => 0` (ou une autre durée) dans la section `webhook` **avant** d'envoyer les nouveaux fichiers. Voir [Rétention](#rétention--7-jours-et-1000-mails-au-plus).
 
@@ -299,6 +303,17 @@ Le message doit apparaître dans la table `mailpit_messages`.
 curl -s 'https://api.amnesic.dev/v1/messages?address=essai@test.mondomaine.fr' -H 'Authorization: Bearer mpt_LE_JETON_AFFICHÉ'
 ```
 
+**Ping de santé** : le relais en envoie un toutes les 30 secondes. Pour en envoyer un à la main, depuis le serveur Mailpit :
+
+```bash
+curl -4 -s -X POST 'https://api.amnesic.dev/v1/health' \
+  -H 'Authorization: Bearer LE_JETON_DE_CONFIG_PHP' \
+  -H 'Content-Type: application/json' \
+  -d '{"latency_ms":null,"pending":0,"failed":0}'
+```
+
+Réponse attendue : `{"status":"ok","time":"…"}`. Dans le Dashboard, la page **Statut** indique **Connecté** (voir [Page Statut](#page-statut)).
+
 **Fichiers protégés** : `https://api.amnesic.dev/config.php`, `/vendor/autoload.php`, `/.ovhconfig`… doivent tous renvoyer `403` ou `404`.
 
 **HTTPS obligatoire** :
@@ -322,9 +337,9 @@ Les tests **PHPUnit** vérifient le code sur votre ordinateur, sans rien déploy
 
 | Suite | Dossier | Ce qui est testé | Base MySQL |
 |---|---|---|---|
-| `unit` | `tests/Unit/` | classes sans base : filtre IP (`IpMatcher`, `ClientIpResolver`), adresses, validation du JSON des mails et des pièces (chaque erreur `422`), configuration (`Settings`), HTTPS (`HttpsDetector` : `HTTPS`, port 443, `X-Forwarded-Proto` d'un proxy de confiance ; `ForceHttpsMiddleware` : `301`, `403`, HSTS), filtres du Dashboard, pages d'erreur du Dashboard (`ErrorPage` : URL concernées, titres et messages selon le code, page minimale si le gabarit ne peut pas être rendu), jetons (`ApiScope`, `Authorization: Bearer`, jeton du relais refusé dans l'URL et avertissement sans sa valeur), adresse comptée par la limite de connexion (`LoginThrottle::ipKey`), rotation du log (`LogRotator` : seuil, archive remplacée, fichier absent, `log_file` à `null`, verrou pris, échec sans exception, requêtes simultanées dans plusieurs processus) | non |
-| `integration` | `tests/Integration/` | accès à la base : mails, pièces, purge, suppression par âge (`created_at`), pièce d'un mail supprimé, nettoyage (`Maintenance` : mails trop anciens ou en trop, fichiers temporaires vieux ou récents, dossiers et fichiers sans ligne en base, au plus toutes les 15 minutes, verrou, erreur seulement écrite dans le log), liste par adresse (sans corps), mail complet limité aux adresses d'un jeton, suppression, jetons développeurs, limite de connexion au Dashboard (par identifiant et adresse, plafond par adresse, IPv6 par `/64`) | oui |
-| `http` | `tests/Http/` | l'application complète (`Kernel::create`) avec de fausses requêtes : routes du relais (`403`, `401`, `401` avec `?token=…`, `415`, `400`, `413`, `422`, `201`, `200`), envoi des pièces jusqu'à `"complete": true`, routes des développeurs (liste sans corps, mail complet par son ID, `404` hors des adresses du jeton, jeton du relais selon l'IP), Dashboard (redirection vers la connexion, refus sans jeton anti-CSRF, messages de blocage, cookie de session `Secure`, exemple `curl` de la page du jeton en `https://` derrière le frontal OVH, pages d'erreur HTML `404` / `405` / `500` avec les en-têtes de sécurité, menu seulement si connecté, base injoignable, détail seulement avec `debug`), erreurs de l'API toujours en JSON (`404`, `405`, `500`, `base_path`), requêtes en clair (`301`, `403` sans rien enregistrer, proxy de confiance, `force_https` désactivé), nettoyage après les requêtes acceptées du relais (et pas après les autres), pièce d'un mail supprimé pendant l'envoi (`404`, fichier effacé), rotation du log au démarrage d'une requête (et requête servie quand l'archivage échoue) | oui |
+| `unit` | `tests/Unit/` | classes sans base : filtre IP (`IpMatcher`, `ClientIpResolver`), adresses, validation du JSON des mails et des pièces (chaque erreur `422`), configuration (`Settings`), HTTPS (`HttpsDetector` : `HTTPS`, port 443, `X-Forwarded-Proto` d'un proxy de confiance ; `ForceHttpsMiddleware` : `301`, `403`, HSTS), filtres du Dashboard, pages d'erreur du Dashboard (`ErrorPage` : URL concernées, titres et messages selon le code, page minimale si le gabarit ne peut pas être rendu), jetons (`ApiScope`, `Authorization: Bearer`, jeton du relais refusé dans l'URL et avertissement sans sa valeur), page Statut (`HealthReport` : état connecté / déconnecté, créneaux de 5 minutes, disponibilité depuis le premier ping, coupures de plus de 90 s ; `LatencyChart` : graphique SVG, axes à l'heure du Dashboard, résumé accessible), adresse comptée par la limite de connexion (`LoginThrottle::ipKey`), rotation du log (`LogRotator` : seuil, archive remplacée, fichier absent, `log_file` à `null`, verrou pris, échec sans exception, requêtes simultanées dans plusieurs processus) | non |
+| `integration` | `tests/Integration/` | accès à la base : mails, pièces, purge, suppression par âge (`created_at`), pièce d'un mail supprimé, nettoyage (`Maintenance` : mails trop anciens ou en trop, fichiers temporaires vieux ou récents, dossiers et fichiers sans ligne en base, au plus toutes les 15 minutes, verrou, erreur seulement écrite dans le log), liste par adresse (sans corps), mail complet limité aux adresses d'un jeton, suppression, jetons développeurs, limite de connexion au Dashboard (par identifiant et adresse, plafond par adresse, IPv6 par `/64`), pings de santé (`HealthRepository` : heures en UTC, ping précédent, purge) | oui |
+| `http` | `tests/Http/` | l'application complète (`Kernel::create`) avec de fausses requêtes : routes du relais (`403`, `401`, `401` avec `?token=…`, `415`, `400`, `413`, `422`, `201`, `200`), ping de santé (`POST /v1/health` : `403`, `401`, `415`, `413`, `400`, `422`, `200` et ligne enregistrée, pings de plus de 48 h supprimés, nettoyage lancé sans jamais faire échouer le ping), envoi des pièces jusqu'à `"complete": true`, routes des développeurs (liste sans corps, mail complet par son ID, `404` hors des adresses du jeton, jeton du relais selon l'IP), Dashboard (redirection vers la connexion, refus sans jeton anti-CSRF, messages de blocage, cookie de session `Secure`, exemple `curl` de la page du jeton en `https://` derrière le frontal OVH, pages d'erreur HTML `404` / `405` / `500` avec les en-têtes de sécurité, menu seulement si connecté, base injoignable, détail seulement avec `debug`, page **Statut** : « Aucun ping reçu », puis « Connecté », compteurs, graphique, coupure, rechargement automatique qui ne prolonge pas la session), erreurs de l'API toujours en JSON (`404`, `405`, `500`, `base_path`), requêtes en clair (`301`, `403` sans rien enregistrer, proxy de confiance, `force_https` désactivé), nettoyage après les requêtes acceptées du relais (et pas après les autres), pièce d'un mail supprimé pendant l'envoi (`404`, fichier effacé), rotation du log au démarrage d'une requête (et requête servie quand l'archivage échoue) | oui |
 
 **Prérequis** : PHP 8.4 minimum avec `pdo_mysql` et `mbstring`, Composer, et une base MySQL **de test** (8.4 comme l'hébergement ; 8.0.19 minimum).
 
@@ -392,7 +407,7 @@ Les pièces jointes des tests sont écrites dans un dossier temporaire, supprim�
 | Log PHP `POST Content-Length of … exceeds the limit` | Un mail au texte ou HTML très lourd, ou une pièce jointe, dépasse `post_max_size` de l'hébergement. Le JSON est quand même lu et enregistré : l'avertissement est sans effet tant que `display_errors` est désactivé (`environment=production` dans `.ovhconfig`) |
 | Pièce jointe en `too_large` | Elle dépasse `webhook.max_attachment_size` (5 Mo par défaut). Seule sa description est enregistrée |
 | Des mails anciens ont disparu | Normal : les mails sont supprimés 7 jours après leur réception par Mailpit (`webhook.max_age_days`), et seuls les `webhook.max_messages` derniers (1000 par défaut) sont gardés. Chaque nettoyage est résumé dans `var/log/api.log` (`[maintenance] …`), les échecs de purge aussi (`[prune] …`) |
-| Des mails de plus de 7 jours sont encore là | Le nettoyage n'a lieu qu'après une requête du relais : relais arrêté, ou aucun mail reçu depuis. Lancez-le à la main (`php bin/cleanup.php`), ou planifiez-le ([Rétention](#rétention--7-jours-et-1000-mails-au-plus)) |
+| Des mails de plus de 7 jours sont encore là | Le nettoyage n'a lieu qu'après une requête du relais (mail, pièce jointe ou ping de santé, toutes les 30 s) : relais arrêté, ou ping de santé désactivé et aucun mail reçu depuis. Lancez-le à la main (`php bin/cleanup.php`), ou planifiez-le ([Rétention](#rétention--7-jours-et-1000-mails-au-plus)) |
 | `[maintenance] nettoyage impossible : …` dans le log | Base injoignable, ou `var/messages/` (`webhook.storage_dir`) pas accessible en écriture. Les mails du relais sont quand même enregistrés ; le nettoyage est retenté 15 minutes plus tard |
 | `text_body` vide | Mail reçu par l'ancien webhook direct de Mailpit (résumé seulement), avant le passage au relais, ou `sql/schema.sql` n'a pas été importé (erreur `Table … doesn't exist` dans le log) |
 | Mail avec `completed_at` vide | Des pièces sont encore attendues (`status = 'pending'` dans `mailpit_parts`). Le relais les renvoie tout seul : voir ses logs |
@@ -405,6 +420,10 @@ Les pièces jointes des tests sont écrites dans un dossier temporaire, supprim�
 | Dashboard : erreur `500` avec `Table … doesn't exist` dans le log | La migration `sql/migrations/2026-11-dashboard-tokens.sql` n'a pas été importée |
 | Dashboard : erreur `500` à la connexion, avec `Field 'ip_key' doesn't have a default value` dans le log | La migration `2026-11-login-throttle-ip.sql` a été importée, mais les fichiers de l'API n'ont pas encore été mis à jour : envoyez la nouvelle version en FTP (au moins `src/` et `templates/`) |
 | Dashboard : erreur `500` à la connexion, avec `Unknown column 'ip_key'` dans le log | La migration `sql/migrations/2026-11-login-throttle-ip.sql` n'a pas été importée |
+| Page **Statut** : erreur `500` avec `Table '…mailpit_health_pings' doesn't exist` dans le log | La migration `sql/migrations/2026-11-health-pings.sql` n'a pas été importée. Le relais reçoit aussi des `500` sur ses pings (ses mails, eux, sont bien enregistrés) |
+| Page **Statut** : « Aucun ping reçu » | Le relais n'envoie pas de ping : version précédente (sans `bin/heartbeat.php` : reconstruisez l'image, [Partie 7](../docs/mailpit/07-relay.md)), `RELAY_HEARTBEAT_INTERVAL=0`, ou pings refusés (`401`, `403` : voir `sudo journalctl -u mailpit-relay -n 50`, lignes `ping de santé …`) |
+| Page **Statut** : « Déconnecté depuis … » | Aucun ping depuis plus de 90 secondes : relais arrêté (`sudo systemctl status mailpit-relay`), serveur Mailpit éteint, réseau coupé, ou API en panne (`500` : voir `var/log/api.log`). Les mails attendent dans Mailpit et seront relayés au retour |
+| Relais : `ping de santé non enregistré : API : HTTP 404` dans son journal | L'API en ligne est une version précédente, sans `POST /v1/health` : renvoyez `src/` et `templates/` en FTP et importez la migration `2026-11-health-pings.sql`. Les mails sont relayés normalement en attendant |
 | Jeton développeur : `401` | Jeton faux, supprimé, ou envoyé ailleurs que dans l'en-tête `Authorization: Bearer …` (`[api-auth] …` dans `var/log/api.log`) |
 | Jeton développeur : `"total": 0` alors que des mails existent | Aucune adresse associée au jeton, ou l'adresse ne correspond à aucun destinataire `To` / `Cc` / `Bcc` |
 | Jeton développeur : `403` | `?address=` désigne une adresse qui n'est pas associée au jeton |
@@ -444,6 +463,9 @@ SELECT mailpit_id, received_at, subject FROM mailpit_messages WHERE completed_at
 
 -- Valeur d'un en-tête
 SELECT subject, headers->>'$."X-Mailer"[0]' AS mailer FROM mailpit_messages ORDER BY id DESC LIMIT 10;
+
+-- Derniers pings de santé du relais (heures en UTC)
+SELECT received_at, latency_ms, pending, failed, source_ip, label FROM mailpit_health_pings ORDER BY id DESC LIMIT 20;
 ```
 
 ## Dashboard
@@ -466,6 +488,7 @@ SELECT subject, headers->>'$."X-Mailer"[0]' AS mailer FROM mailpit_messages ORDE
 Une suppression efface le mail de la base (pièces jointes et destinataires compris) et ses fichiers dans `var/messages/`, comme `DELETE /v1/messages/{id}` côté jetons. Le mail reste dans **Mailpit**. Si le relais l'y renvoyait (mail pas encore complet au moment de la suppression), il réapparaîtrait.
 - **Tokens** : création (un nom suffit) et suppression des jetons développeurs. Un jeton supprimé est refusé (`401`) dès l'appel suivant.
 - **Détail d'un jeton** : associer ou retirer des adresses, et voir combien de mails chacune a reçus.
+- **Statut** : connexion du relais sur les dernières 24 heures, d'après ses pings de santé : voir [Page Statut](#page-statut).
 
 **Pages d'erreur.** Une adresse inconnue, un mail ou un jeton qui n'existe plus, une erreur du serveur : le Dashboard affiche une page d'erreur, dans sa mise en page, avec le bon code HTTP et un lien **Retour aux mails** (jamais de JSON brut). Le menu n'y apparaît que si vous êtes connecté. Une erreur `500` (base injoignable, par ex.) dit seulement « Erreur interne » : le détail est dans `var/log/api.log`, ou sur la page avec `'debug' => true`. Les `404` et `405` ne sont pas écrites dans le log. Si la page elle-même ne peut pas être affichée, une page HTML minimale la remplace (et `[dashboard] page d'erreur … impossible à afficher` est écrit dans le log).
 
@@ -476,6 +499,28 @@ Une suppression efface le mail de la base (pièces jointes et destinataires comp
 **Sécurité.** Les pages n'exécutent qu'un seul script, `dashboard.js`, servi par l'API (CSP `script-src 'self'`) : il affiche les confirmations et gère les cases à cocher. Connexion limitée, sur 30 minutes, à **3 échecs par identifiant depuis une même adresse** et à **10 échecs par adresse**, tous identifiants confondus. Au-delà, la connexion est refusée (`429`, en-tête `Retry-After`) jusqu'à 30 minutes après le plus ancien des échecs comptés, même avec le bon mot de passe. Le blocage d'un identifiant ne vaut que pour l'adresse qui a échoué : quelqu'un d'autre ne peut pas bloquer votre compte. Une IPv4 est comptée à l'adresse exacte, une IPv6 par préfixe `/64` (sinon il suffirait de changer d'adresse dans son `/64`). Une connexion réussie remet à zéro le compteur de cet identifiant depuis cette adresse. Un identifiant inexistant est traité de la même façon, pour ne pas révéler quels comptes existent. Derrière un proxy, l'adresse est celle du client, déterminée comme pour le filtre IP (`proxy.trusted_proxies`). Les autres protections : mots de passe hachés (`password_hash`), HTTPS obligatoire ([voir plus bas](#https-obligatoire)), cookie de session `HttpOnly`, `SameSite=Strict` et `Secure`, limité au chemin `/v1/app`, jeton anti-CSRF dans chaque formulaire, déconnexion après 2 h d'inactivité (`app.session_lifetime`), pages (pages d'erreur comprises) jamais mises en cache ni affichables dans une iframe.
 
 Le Dashboard est accessible depuis **n'importe quelle IP** : `webhook.allowed_ips` ne concerne que le relais.
+
+## Page Statut
+
+`https://api.amnesic.dev/v1/app/status` (menu **Statut** du Dashboard) : la connexion entre le [relais](../relay/README.md#ping-de-santé) et l'API sur les **dernières 24 heures**.
+
+Le relais envoie un **ping de santé** (`POST /v1/health`) toutes les 30 secondes, depuis un processus à part : un gros mail en cours d'envoi ne le retarde pas. Chaque ping donne la latence du ping précédent (aller-retour HTTP mesuré par le relais) et le nombre de mails en attente et refusés dans Mailpit. L'API l'enregistre dans `mailpit_health_pings`, et supprime à cette occasion les pings de plus de **48 heures** : la table garde au plus 5 760 lignes.
+
+| Bloc | Contenu |
+|---|---|
+| **État** | **Connecté** si le dernier ping date de 90 secondes au plus (3 pings manqués), sinon **Déconnecté depuis …** avec l'heure du dernier ping. **Aucun ping reçu** si la table est vide (relais d'une version précédente, ping désactivé, ou refusé) |
+| Dernier ping | Heure (fuseau du Dashboard, `app.timezone`) et instance (`RELAY_LABEL`, en-tête `Mailpit-Label`) |
+| Latence | Dernière latence, médiane et maximum sur 24 heures |
+| Mails en attente / refusés | D'après le dernier ping. « inconnu » si le relais n'a pas pu joindre Mailpit |
+| Disponibilité | Part des **créneaux de 5 minutes** qui ont reçu au moins un ping, sur 24 heures, ou depuis le premier ping si l'historique est plus court. Le créneau en cours ne compte pas tant que le relais est connecté |
+| Graphique | Latence par créneau de 5 minutes : barre pleine jusqu'à la médiane, barre claire jusqu'au maximum, **bande rouge** quand aucun ping n'est arrivé (déconnexion). Survolez une barre pour le détail |
+| Coupures | Chaque intervalle de **plus de 90 secondes** sans ping, du plus récent au plus ancien : début (dernier ping reçu), fin (ping suivant, ou « en cours »), durée |
+
+La page se recharge toute seule chaque minute, sans prolonger la session : laissée ouverte, elle renvoie vers la connexion après `app.session_lifetime` d'inactivité (2 h), comme les autres pages. Le graphique est un SVG calculé par l'API : aucun script, aucune librairie externe (la CSP du Dashboard n'autorise que `dashboard.js`). Il suit le mode sombre du navigateur. Il est décrit en texte pour les lecteurs d'écran.
+
+Les heures sont celles de l'horloge de PHP, en UTC dans la base. Le ping enregistre aussi l'IP du relais (`source_ip`).
+
+> 💡 Une coupure n'est pas forcément une panne de l'API : relais arrêté ou redémarré, serveur Mailpit éteint, réseau coupé. Les mails ne sont pas perdus pour autant : ils attendent dans Mailpit et sont relayés au retour.
 
 ## Jetons développeurs
 
@@ -617,7 +662,7 @@ L'API supprime les mails toute seule, base **et** fichiers (leur ligne dans `mai
 | Mails reçus par Mailpit il y a plus de 7 jours (colonne `created_at`) | `webhook.max_age_days` (`7`, `0` = jamais) | au nettoyage |
 | Au-delà des 1000 mails les plus récents (ordre d'arrivée dans l'API) | `webhook.max_messages` (`1000`, `0` = sans limite) | à chaque **nouveau** mail, et au nettoyage |
 
-**Nettoyage automatique, sans tâche planifiée** : après une requête acceptée du relais (un mail ou une pièce jointe), l'API nettoie si le dernier nettoyage date de plus de **15 minutes**. Sa date est dans `var/messages/.maintenance`, verrouillé pendant le nettoyage : deux requêtes simultanées ne nettoient pas en même temps. Une erreur de nettoyage ne fait jamais échouer la requête du relais : elle est écrite dans `var/log/api.log` (`[maintenance] …`), et le nettoyage est retenté 15 minutes plus tard. Chaque nettoyage qui supprime quelque chose y écrit un résumé.
+**Nettoyage automatique, sans tâche planifiée** : après une requête acceptée du relais (un mail, une pièce jointe, ou son ping de santé toutes les 30 secondes : le nettoyage a donc lieu même quand aucun mail n'arrive), l'API nettoie si le dernier nettoyage date de plus de **15 minutes**. Sa date est dans `var/messages/.maintenance`, verrouillé pendant le nettoyage : deux requêtes simultanées ne nettoient pas en même temps. Une erreur de nettoyage ne fait jamais échouer la requête du relais : elle est écrite dans `var/log/api.log` (`[maintenance] …`), et le nettoyage est retenté 15 minutes plus tard. Chaque nettoyage qui supprime quelque chose y écrit un résumé.
 
 Les suppressions se font par paquets de 200 mails, 1000 au plus par nettoyage automatique. Une grosse purge (après avoir baissé une limite, ou à la mise à jour) continue dès la requête suivante du relais.
 
@@ -631,7 +676,7 @@ Un mail supprimé (purge, Dashboard, `DELETE`) **pendant** l'envoi d'une de ses 
 
 Gardez les mêmes valeurs côté Mailpit ([Partie 1, étape 3](../docs/mailpit/01-podman.md#étape-3--créer-le-fichier-de-configuration-de-mailpit)) : `MP_MAX_MESSAGES=1000` et `MP_MAX_AGE=7d`. Mailpit et l'API conservent alors les mêmes mails.
 
-> 💡 Le relais déclenche le nettoyage : s'il est arrêté, rien n'est supprimé. Pour nettoyer quand même, lancez **`php bin/cleanup.php`** dans le dossier `api/` de l'hébergement (SSH, s'il est inclus dans votre offre). Il fait tout le nettoyage tout de suite, jusqu'au bout, et affiche un résumé :
+> 💡 Le relais déclenche le nettoyage, ne serait-ce que par son ping de santé toutes les 30 secondes : s'il est arrêté, rien n'est supprimé. Pour nettoyer quand même, lancez **`php bin/cleanup.php`** dans le dossier `api/` de l'hébergement (SSH, s'il est inclus dans votre offre). Il fait tout le nettoyage tout de suite, jusqu'au bout, et affiche un résumé :
 >
 > ```
 > Nettoyage terminé :

@@ -98,7 +98,7 @@ Ce jeton servira à nouveau en phase 2 et en phase 3. Conservez-le dans un gesti
 
 ### Étape 1.2 — ☁️ OVH : base, fichiers, domaine
 
-1. **phpMyAdmin** → onglet **Importer** → `sql/schema.sql`. Les tables `mailpit_messages` et `mailpit_parts` doivent apparaître.
+1. **phpMyAdmin** → onglet **Importer** → `sql/schema.sql`. Les tables `mailpit_messages`, `mailpit_parts` et `mailpit_health_pings` (pings de santé du relais) doivent apparaître, avec celles du Dashboard. Base créée avec une version précédente : importez plutôt les migrations de `sql/migrations/` (voir le [README de l'API](../../api/README.md#2-créer-les-tables)).
 2. **FTP** : envoyez tout le contenu de `api/` dans un dossier `api` à la racine de l'hébergement, **fichiers cachés compris** (`.htaccess`, `public/.htaccess`, `var/.htaccess`, `.ovhconfig`), ainsi que `vendor/` et `config.php`.
 3. **Multisite** : ajoutez `api.mondomaine.fr`, avec `api/public` comme dossier racine, et cochez **SSL**. L'API impose HTTPS : attendez que la colonne **SSL** indique **Activé** avant l'étape 1.3.
 4. **Version de PHP** : avec `api/public` comme dossier racine, déplacez `.ovhconfig` dans `api/public/`. Vérifiez ensuite la version active dans l'onglet **Informations générales** (8.4 minimum).
@@ -317,10 +317,12 @@ sudo journalctl -u mailpit-relay -n 20 --no-pager
 ✅ Attendu : les deux services `active (running)`, et une ligne de ce type :
 
 ```
-[relay] INFO  démarrage : écoute sur 0.0.0.0:8080, Mailpit=http://mailpit:8025 (auth oui), API=https://api.mondomaine.fr (jeton 3f9a…), recherche « !tag:relayed !tag:relay-failed after:2026-11-09 » toutes les 30 s
+[relay] INFO  démarrage : écoute sur 0.0.0.0:8080, Mailpit=http://mailpit:8025 (auth oui), API=https://api.mondomaine.fr (jeton 3f9a…), recherche « !tag:relayed !tag:relay-failed after:2026-11-09 » toutes les 30 s, ping de santé toutes les 30 s
 ```
 
-Vérifiez dans cette ligne : l'adresse de l'API, `auth oui`, les 4 premiers caractères du jeton, et la date de `after:`.
+Vérifiez dans cette ligne : l'adresse de l'API, `auth oui`, les 4 premiers caractères du jeton, la date de `after:`, et `ping de santé toutes les 30 s`. Aucune ligne `ping de santé non enregistré` ne doit suivre.
+
+❌ `ping de santé non enregistré : API : HTTP 404` : l'API en ligne est une version précédente, sans `POST /v1/health` (renvoyez `src/` et `templates/` en FTP). `HTTP 500` : la table `mailpit_health_pings` manque (étape 1.2).
 
 ❌ `configuration invalide : …` : le message indique la variable fautive dans `relay.env`.
 
@@ -367,6 +369,21 @@ sudo ss -ltnp | grep -E ':8080 ' || echo "port 8080 non publié : OK"
 ```
 
 ✅ Attendu : aucune sortie pour la première commande, puis `port 8080 non publié : OK`.
+
+### Étape 3.6 — 💻 Ordinateur : la page Statut montre « Connecté »
+
+Le relais envoie un **ping de santé** à l'API toutes les 30 secondes. Ouvrez le Dashboard de l'API dans un navigateur, connectez-vous, puis cliquez sur **Statut** dans le menu (`https://api.mondomaine.fr/v1/app/status`).
+
+✅ Attendu :
+
+- le badge vert **Connecté**, et « dernier ping il y a » moins de 30 secondes ;
+- **Dernier ping** à l'heure actuelle (fuseau du Dashboard), **Dernière latence** de quelques dizaines ou centaines de millisecondes (« inconnue » juste après le démarrage du relais : elle arrive avec le 2e ping) ;
+- **Mails en attente** : `0`, et **Mails refusés** : `0` ;
+- **Disponibilité** « depuis le premier ping », et dans le graphique, une première barre bleue à droite. La page se recharge seule chaque minute, sans prolonger votre session : laissée ouverte plus de 2 heures sans clic, elle revient à la page de connexion.
+
+❌ « Aucun ping reçu » : regardez le journal du relais (`sudo journalctl -u mailpit-relay -n 20 --no-pager`, lignes `ping de santé …`) et l'étape 3.2.
+
+❌ « inconnu » pour les mails en attente : le relais ne joint pas Mailpit (lignes `ping de santé envoyé sans les compteurs` dans son journal) : voir l'étape 3.3.
 
 ---
 
@@ -524,6 +541,8 @@ sudo systemctl start mailpit-relay
 - pendant l'arrêt, Mailpit écrit des erreurs de webhook (`connection refused` ou `no such host`). C'est normal ;
 - au redémarrage, les 3 mails `Pendant l'arret …` sont enregistrés par l'API en quelques secondes.
 
+> 💡 Pour voir la coupure dans la page **Statut** (étape 3.6), attendez **2 minutes** avant `sudo systemctl start mailpit-relay` : la page affiche alors **Déconnecté depuis …** (badge rouge). Après le redémarrage, elle revient à **Connecté**, et la coupure apparaît dans la liste **Coupures**, avec sa durée.
+
 ### Étape 5.2 — 🖥️ Serveur : l'API refuse le relais (mauvais jeton)
 
 On simule un jeton désynchronisé, par exemple après avoir changé `config.php` sans mettre à jour le relais.
@@ -537,12 +556,16 @@ On simule un jeton désynchronisé, par exemple après avoir changé `config.php
    ```
    [relay] WARN  mail … : échec de l'essai 1 (API (message) : HTTP 401 …), nouvel essai dans 30 s
    ```
-   puis l'essai 2 au bout de 30 s, l'essai 3 au bout d'une minute, etc. Le mail n'a **pas** le tag `relayed` dans Mailpit.
+   puis l'essai 2 au bout de 30 s, l'essai 3 au bout d'une minute, etc. Le mail n'a **pas** le tag `relayed` dans Mailpit. Le ping de santé est refusé lui aussi, **une** seule ligne pour l'instant (puis un rappel toutes les 10 minutes) :
+   ```
+   [relay] WARN  ping de santé non enregistré : API : HTTP 401 {"error":"Unauthorized"} (rappel toutes les 10 minutes tant que l'échec dure)
+   ```
+   Au bout de 90 secondes, la page **Statut** passe à **Déconnecté depuis …**.
 3. Remettez le bon jeton dans `relay.env`, puis :
    ```bash
    sudo systemctl restart mailpit-relay
    ```
-4. ✅ Attendu : `mail … enregistré par l'API (Phase 5.2)` aussitôt après le redémarrage.
+4. ✅ Attendu : `mail … enregistré par l'API (Phase 5.2)` aussitôt après le redémarrage, et la page **Statut** de nouveau sur **Connecté**, avec une coupure dans la liste.
 
 > 💡 La même chose se produit si l'API est en panne ou si l'IP est refusée (`HTTP 403`, `injoignable`). Le relais réessaie sans limite de durée : il suffit de corriger le problème.
 
@@ -595,7 +618,7 @@ sudo journalctl -u mailpit-relay -n 5 --no-pager
 
 ## Phase 6 — Remise en ordre
 
-1. 🖥️ `sudo podman exec mailpit-relay php /app/bin/status.php` : **0** en attente, **0** refusé.
+1. 🖥️ `sudo podman exec mailpit-relay php /app/bin/status.php` : **0** en attente, **0** refusé. 💻 Page **Statut** du Dashboard : **Connecté**, `0` en attente, `0` refusé. Les coupures provoquées en phase 5 restent dans la liste pendant 24 heures.
 2. 🖥️ Effacez les secrets du terminal : `unset JETON MPAUTH`.
 3. 🖥️ **`RELAY_QUERY`** : vous pouvez garder la ligne `after:…`. Elle empêche seulement de relayer les mails reçus **avant** cette date. Si vous la retirez, lancez `sudo systemctl restart mailpit-relay` : le relais envoie alors ces anciens mails à l'API, un par un. Suivez le rattrapage avec `status.php`, jusqu'à **0** en attente.
 4. ☁️ **Mails de test dans l'API** : supprimez-les si vous voulez une base propre, en visant **uniquement** la période des tests. `created_at` est en UTC. Un `DELETE` sans condition effacerait aussi les anciens mails relayés au point 3, et les vrais mails :

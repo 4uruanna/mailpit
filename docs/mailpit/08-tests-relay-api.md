@@ -238,6 +238,20 @@ Renvoyez le **même** mail (relancez la première commande `curl` de cette étap
 
 ✅ Attendu : `"status":"duplicate"` et `200`. L'API reconnaît le doublon : c'est ce qui permet au relais de renvoyer un mail sans risque.
 
+Relisez-le par l'API. La liste n'en donne que le résumé ; le mail complet (corps, en-têtes) se lit par son ID :
+
+```bash
+# La liste : le résumé, sans le corps
+curl -4 -s -H "Authorization: Bearer $JETON" "$API/v1/messages" | grep -oE '"(id|subject|text)":[^,]*'
+
+# Le mail complet
+curl -4 -s -H "Authorization: Bearer $JETON" "$API/v1/messages/test-manuel-1" | grep -oE '"(id|subject|text)":[^,]*'
+```
+
+✅ Attendu : `"id":"test-manuel-1"` et `"subject":"Test manuel"` pour la liste, **sans** `"text"` ; puis les mêmes et `"text":"Bonjour"` pour le mail complet.
+
+❌ `405` sur le mail complet : l'API en ligne est une version précédente, sans `GET /v1/messages/{id}` (seul `DELETE` existe à cette adresse) : renvoyez `src/` en FTP.
+
 ### Étape 2.5 — ☁️ OVH : vérifier ce qui a été enregistré
 
 - **phpMyAdmin**, table `mailpit_messages` : une ligne `test-manuel-1`, avec `text_body` = `Bonjour` et `completed_at` rempli.
@@ -422,6 +436,16 @@ curl -4 -s -H "Authorization: Bearer $JETON" "$API/v1/messages?limit=1" | python
 ```
 
 ✅ Attendu : `"complete": true`, une pièce `"kind": "inline"` (`point.png`) et une pièce `"kind": "attachment"` (`note.txt`), toutes deux `"status": "stored"`.
+
+Le mail complet, lu par son ID (le premier `"id"` de la liste) :
+
+```bash
+ID=$(curl -4 -s -H "Authorization: Bearer $JETON" "$API/v1/messages?limit=1" | grep -oE '"id":"[^"]+"' | head -1 | cut -d'"' -f4)
+curl -4 -s -H "Authorization: Bearer $JETON" "$API/v1/messages/$ID" \
+  | python3 -c 'import json, sys; m = json.load(sys.stdin); print(m["text"].strip()); print("cid:" in m["html"], len(m["headers"]) > 0)'
+```
+
+✅ Attendu : `Version texte du mail de test.`, puis `True True` (le HTML référence l'image intégrée, les en-têtes sont là).
 
 ☁️ **OVH** : dans phpMyAdmin, la ligne du mail a `html_body` et `headers` remplis. Par FTP, `var/messages/<ID>/` contient deux fichiers `part-…`.
 

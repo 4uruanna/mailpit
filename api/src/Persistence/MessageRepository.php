@@ -227,15 +227,15 @@ final readonly class MessageRepository
 
     /**
      * Liste des messages triés par date de réception par Mailpit (du plus récent au plus ancien,
-     * ou l'inverse), avec la description de leurs pièces. Sans les en-têtes, pour rester léger.
+     * ou l'inverse), avec la description de leurs pièces. Résumés seulement : ni corps ni en-têtes
+     * (jusqu'à 16 Mo chacun), pour ne pas dépasser la mémoire de l'hébergement. Le mail complet : find().
      *
      * @param list<string>|null $addresses ne garde que les mails dont un destinataire (To, Cc, Bcc)
      *                                     est dans cette liste ; null = tous les mails
-     * @param bool $withBodies ajoute le corps du mail (« text », « html »)
      * @param bool $oldestFirst du plus ancien au plus récent
      * @return array{total: int, messages: list<array<string, mixed>>}
      */
-    public function list(int $limit, int $offset, ?array $addresses = null, bool $withBodies = false, bool $oldestFirst = false): array
+    public function list(int $limit, int $offset, ?array $addresses = null, bool $oldestFirst = false): array
     {
         if ($addresses === []) {
             return ['total' => 0, 'messages' => []];
@@ -257,7 +257,7 @@ final readonly class MessageRepository
         $count->execute($params);
         $total = (int) $count->fetchColumn();
 
-        $columns = self::COLUMNS . ($withBodies ? ', text_body, html_body' : '');
+        $columns = self::COLUMNS;
         $order = $oldestFirst ? 'created_at ASC, id ASC' : 'created_at DESC, id DESC';
         $statement = $pdo->prepare(<<<SQL
             SELECT $columns
@@ -278,7 +278,7 @@ final readonly class MessageRepository
         $parts = $this->parts($pdo, array_map(static fn (array $row): int => (int) $row['id'], $rows));
 
         $messages = array_map(
-            static fn (array $row): array => self::present($row, $parts[(int) $row['id']] ?? [], $withBodies),
+            static fn (array $row): array => self::present($row, $parts[(int) $row['id']] ?? []),
             $rows,
         );
 
@@ -289,21 +289,42 @@ final readonly class MessageRepository
      * Un mail complet : champs de la liste, corps (« text », « html »), en-têtes (« headers »),
      * et pièces avec leur fichier (« storage_path », relatif au dossier de stockage).
      *
-     * @return array<string, mixed>|null
+     * @param list<string>|null $addresses le mail n'est renvoyé que si l'un de ses destinataires
+     *                                     (To, Cc, Bcc) est dans cette liste ; null = sans condition
+     * @param bool $withPath ajoute « storage_path » aux pièces (Dashboard) ; false pour l'API
+     * @return array<string, mixed>|null null si le mail est inconnu (ou hors des adresses autorisées)
      */
-    public function find(string $mailpitId): ?array
+    public function find(string $mailpitId, ?array $addresses = null, bool $withPath = true): ?array
     {
+        if ($addresses === []) {
+            return null;
+        }
+
+        $sql = sprintf('SELECT %s, text_body, html_body, headers FROM mailpit_messages WHERE mailpit_id = ?', self::COLUMNS);
+        $params = [$mailpitId];
+        if ($addresses !== null) {
+            $sql .= sprintf(
+                ' AND id IN (SELECT message_id FROM mailpit_message_recipients WHERE address IN (%s))',
+                implode(',', array_fill(0, count($addresses), '?')),
+            );
+            $params = [...$params, ...array_values($addresses)];
+        }
+
         $pdo = $this->database->pdo();
-        $statement = $pdo->prepare(sprintf('SELECT %s, text_body, html_body, headers FROM mailpit_messages WHERE mailpit_id = ?', self::COLUMNS));
-        $statement->execute([$mailpitId]);
+        $statement = $pdo->prepare($sql);
+        $statement->execute($params);
         $row = $statement->fetch();
         if ($row === false) {
             return null;
         }
 
-        $parts = $this->parts($pdo, [(int) $row['id']], withPath: true);
+        $parts = $this->parts($pdo, [(int) $row['id']], $withPath);
 
-        return self::present($row, $parts[(int) $row['id']] ?? [], true) + ['headers' => self::decode($row['headers'])];
+        return self::present($row, $parts[(int) $row['id']] ?? []) + [
+            'text'    => $row['text_body'],
+            'html'    => $row['html_body'],
+            'headers' => self::decode($row['headers']),
+        ];
     }
 
     /**
@@ -488,12 +509,12 @@ final readonly class MessageRepository
     }
 
     /**
-     * Ligne de mailpit_messages telle que renvoyée par l'API.
+     * Résumé d'une ligne de mailpit_messages tel que renvoyé par l'API (sans corps ni en-têtes).
      *
      * @param list<array<string, mixed>> $parts
      * @return array<string, mixed>
      */
-    private static function present(array $row, array $parts, bool $withBodies): array
+    private static function present(array $row, array $parts): array
     {
         return [
             'id'          => (string) $row['mailpit_id'],
@@ -518,10 +539,7 @@ final readonly class MessageRepository
             'received_at' => self::isoDate($row['received_at']),
             'complete'    => $row['completed_at'] !== null,
             'parts'       => $parts,
-        ] + ($withBodies ? [
-            'text' => $row['text_body'],
-            'html' => $row['html_body'],
-        ] : []);
+        ];
     }
 
     /**

@@ -203,6 +203,7 @@ final class DashboardTest extends AppTestCase
         self::assertSame(200, $response->getStatusCode());
         $body = (string) $response->getBody();
         self::assertStringContainsString('https://api.test/v1/messages?address=', $body);
+        self::assertStringContainsString('https://api.test/v1/messages/ID_DU_MAIL', $body);
         self::assertStringNotContainsString('http://api.test', $body);
     }
 

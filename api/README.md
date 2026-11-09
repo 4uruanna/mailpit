@@ -29,13 +29,10 @@ api/
 │   ├── .htaccess        # contrôleur frontal Slim
 │   └── index.php
 ├── sql/
-│   ├── schema.sql                     # tables MySQL (nouvelle installation)
-│   ├── upgrade-001-corps.sql          # mise à jour : colonnes du corps
-│   ├── upgrade-002-pieces-jointes.sql # mise à jour : en-têtes, pièces jointes
-│   └── upgrade-003-sans-eml.sql       # mise à jour : retrait des mails bruts (.eml)
+│   └── schema.sql       # tables MySQL, à importer une fois
 ├── src/                 # code de l'API
 ├── var/log/             # logs (doit être accessible en écriture)
-├── var/messages/        # pièces jointes et mails bruts, un dossier par mail (accessible en écriture)
+├── var/messages/        # pièces jointes et images intégrées, un dossier par mail (accessible en écriture)
 └── vendor/              # généré par composer install, à envoyer en FTP
 ```
 
@@ -115,14 +112,9 @@ curl -6 -s https://ifconfig.me; echo
 
 > ⚠️ **N'oubliez pas l'IPv6.** L'hébergement OVH répond aussi en IPv6. Si le serveur Mailpit en a une, c'est elle qu'il utilisera en priorité pour appeler l'API, et l'IPv4 seule ne suffira pas. Vous pouvez mettre l'adresse exacte ou sa plage `/64`.
 
-### 2. Créer la table
+### 2. Créer les tables
 
-Espace client OVH → **Bases de données** → **…** → **Aller sur phpMyAdmin**, puis onglet **Importer** → fichier `sql/schema.sql`. Il crée les tables `mailpit_messages` et `mailpit_parts`.
-
-> **Tables déjà créées avec une version précédente ?** Importez, une seule fois chacun et dans l'ordre, les fichiers de mise à jour que vous n'avez pas encore passés :
-> - `sql/upgrade-001-corps.sql` : colonnes `text_body`, `html_body` et `raw_file` ;
-> - `sql/upgrade-002-pieces-jointes.sql` : colonnes `headers`, `return_path`, `message_date`, `completed_at` et table `mailpit_parts`. Les mails déjà en base sont marqués complets ;
-> - `sql/upgrade-003-sans-eml.sql` : retire la colonne `raw_file` et les pièces `raw` (mails bruts `.eml`). Supprimez ensuite par FTP les fichiers `.eml` restants : `var/messages/<ID>/message.eml`, et `var/messages/<ID>.eml` pour les toutes premières versions.
+Espace client OVH → **Bases de données** → **…** → **Aller sur phpMyAdmin**. Sélectionnez la base dans la colonne de gauche, puis onglet **Importer** → fichier `sql/schema.sql`. Il crée les tables `mailpit_messages` et `mailpit_parts`.
 
 ### 3. Envoyer en FTP
 
@@ -228,7 +220,7 @@ Le message doit apparaître dans la table `mailpit_messages`.
 | `403` depuis le serveur Mailpit | L'IP vue par l'API n'est pas dans `allowed_ips`. Elle est écrite dans `var/log/api.log` (`[ip-filter] requête refusée depuis « … »`) : ajoutez-la. C'est souvent l'IPv6 |
 | `401` | Jeton absent ou différent de `webhook.token` (`[auth] jeton absent` ou `[auth] jeton invalide` dans `var/log/api.log`). Vérifiez `RELAY_API_TOKEN` (relais) ou `MP_WEBHOOK_URL` (webhook direct) |
 | `401` avec `jeton absent` alors que le relais envoie bien le jeton | L'en-tête `Authorization` n'arrive pas jusqu'à PHP : vérifiez que les `.htaccess` (racine et `public/`) ont bien été envoyés, à jour |
-| `500` avec `{"error":"Erreur de configuration du serveur"}` | `vendor/` ou `config.php` absent, ou `config.php` invalide (détail dans `var/log/api.log`). Après une mise à jour : `webhook.token` est désormais **obligatoire** (32 caractères minimum) |
+| `500` avec `{"error":"Erreur de configuration du serveur"}` | `vendor/` ou `config.php` absent, ou `config.php` invalide (détail dans `var/log/api.log`). Souvent : `webhook.token` vide ou trop court (**obligatoire**, 32 caractères minimum) |
 | `500` avec `Slim Application Error` | Souvent la base : identifiants faux ou table absente. Détail dans `var/log/api.log` |
 | `404` sur `/v1/messages` | `.htaccess` non envoyés (fichiers cachés), ou mauvais dossier racine du multisite. Si l'API est dans un sous-dossier de l'URL, renseignez `base_path` |
 | Certains mails manquent en base | `MP_WEBHOOK_LIMIT` n'est pas à `0` (voir l'étape 5) |
@@ -237,7 +229,7 @@ Le message doit apparaître dans la table `mailpit_messages`.
 | Log PHP `POST Content-Length of … exceeds the limit` | Un mail au texte ou HTML très lourd, ou une pièce jointe, dépasse `post_max_size` de l'hébergement. Le JSON est quand même lu et enregistré : l'avertissement est sans effet tant que `display_errors` est désactivé (`environment=production` dans `.ovhconfig`) |
 | Pièce jointe en `too_large` | Elle dépasse `webhook.max_attachment_size` (5 Mo par défaut). Seule sa description est enregistrée |
 | Des mails anciens ont disparu | Normal : seuls les `webhook.max_messages` derniers (1000 par défaut) sont gardés. Les échecs de purge sont écrits dans `var/log/api.log` (`[prune] …`) |
-| `text_body` toujours vide | Le webhook ne passe pas par le relais (`MP_WEBHOOK_URL` pointe directement sur l'API), ou une mise à jour SQL n'a pas été importée (erreur `Unknown column` ou `Table … doesn't exist` dans le log) |
+| `text_body` toujours vide | Le webhook ne passe pas par le relais (`MP_WEBHOOK_URL` pointe directement sur l'API), ou `sql/schema.sql` n'a pas été importé (erreur `Table … doesn't exist` dans le log) |
 | Mail avec `completed_at` vide | Des pièces sont encore attendues (`status = 'pending'` dans `mailpit_parts`). Le relais les renvoie tout seul : voir ses logs |
 | Page blanche / erreur PHP | Version de PHP trop ancienne : vérifiez `.ovhconfig` (8.4 minimum) |
 

@@ -320,12 +320,18 @@ Gardez un **premier terminal** ouvert sur le serveur avec les logs du relais pen
 sudo journalctl -u mailpit-relay -f
 ```
 
-Tapez les commandes dans un **second terminal**, après y avoir refait l'étape 2.1 (chargement du jeton).
+Tapez les commandes dans un **second terminal**, après y avoir refait l'étape 2.1 (chargement du jeton). Enregistrez-y aussi l'adresse de test, avec **votre** sous-domaine, celui de `MP_SMTP_ALLOWED_RECIPIENTS` (`sudo grep '^MP_SMTP_ALLOWED' /etc/mailpit/mailpit.env`) :
+
+```bash
+export TO=essai@test.mondomaine.fr
+```
+
+Les commandes des phases 4 et 5 utilisent `$TO`. Si l'adresse n'est pas acceptée par Mailpit, `swaks` se termine par une erreur `550` et aucun mail n'arrive : vérifiez `$TO` en premier (`echo $TO`).
 
 ### Étape 4.1 — 🖥️ Serveur : un mail simple
 
 ```bash
-swaks --server 127.0.0.1 --port 25 --to essai@test.mondomaine.fr --header "Subject: Phase 4.1"
+swaks --server 127.0.0.1 --port 25 --to "$TO" --header "Subject: Phase 4.1"
 ```
 
 ✅ Attendu dans le premier terminal, en une ou deux secondes :
@@ -354,7 +360,7 @@ Ce script envoie un mail complet : texte, HTML avec une image intégrée (`cid:`
 
 ```bash
 python3 - <<'EOF'
-import base64, smtplib
+import base64, os, smtplib
 from email.message import EmailMessage
 from email.utils import make_msgid
 
@@ -363,7 +369,7 @@ cid = make_msgid(domain="test.local")
 
 msg = EmailMessage()
 msg["From"] = "Test relais <test@exemple.fr>"
-msg["To"] = "essai@test.mondomaine.fr"
+msg["To"] = os.environ["TO"]
 msg["Subject"] = "Phase 4.2 : HTML + image + PJ"
 msg.set_content("Version texte du mail de test.")
 msg.add_alternative(f'<p>Version <b>HTML</b> avec une image : <img src="cid:{cid[1:-1]}"></p>', subtype="html")
@@ -392,7 +398,7 @@ curl -4 -s -H "Authorization: Bearer $JETON" "$API/v1/messages?limit=1" | python
 
 ```bash
 head -c 6000000 /dev/urandom > /tmp/gros.bin
-swaks --server 127.0.0.1 --port 25 --to essai@test.mondomaine.fr --header "Subject: Phase 4.3" --attach @/tmp/gros.bin
+swaks --server 127.0.0.1 --port 25 --to "$TO" --header "Subject: Phase 4.3" --attach @/tmp/gros.bin
 rm /tmp/gros.bin
 ```
 
@@ -410,7 +416,7 @@ Ce test vérifie qu'aucun mail n'est ignoré quand ils arrivent dans la même se
 ```bash
 AVANT=$(curl -4 -s -H "Authorization: Bearer $JETON" "$API/v1/messages?limit=1" | grep -o '"total":[0-9]*')
 for i in $(seq 1 10); do
-  swaks --server 127.0.0.1 --port 25 --to essai@test.mondomaine.fr --header "Subject: Rafale $i" >/dev/null
+  swaks --server 127.0.0.1 --port 25 --to "$TO" --header "Subject: Rafale $i" >/dev/null
 done
 ```
 
@@ -440,7 +446,7 @@ Le relais est fait pour ne perdre **aucun** mail. Ces tests le vérifient en pro
 
 ```bash
 sudo systemctl stop mailpit-relay
-for i in 1 2 3; do swaks --server 127.0.0.1 --port 25 --to essai@test.mondomaine.fr --header "Subject: Pendant l'arret $i" >/dev/null; done
+for i in 1 2 3; do swaks --server 127.0.0.1 --port 25 --to "$TO" --header "Subject: Pendant l'arret $i" >/dev/null; done
 sudo journalctl -u mailpit -n 5 --no-pager | grep -i webhook
 sudo systemctl start mailpit-relay
 ```
@@ -457,7 +463,7 @@ On simule un jeton désynchronisé, par exemple après avoir changé `config.php
 1. Dans `/etc/mailpit/relay.env`, modifiez **un seul caractère** de `RELAY_API_TOKEN`, puis :
    ```bash
    sudo systemctl restart mailpit-relay
-   swaks --server 127.0.0.1 --port 25 --to essai@test.mondomaine.fr --header "Subject: Phase 5.2"
+   swaks --server 127.0.0.1 --port 25 --to "$TO" --header "Subject: Phase 5.2"
    ```
 2. ✅ Attendu dans les logs :
    ```
@@ -492,7 +498,7 @@ Après le redémarrage :
 
 ```bash
 sudo systemctl status mailpit mailpit-relay --no-pager | grep -E '●|Active'
-swaks --server 127.0.0.1 --port 25 --to essai@test.mondomaine.fr --header "Subject: Apres reboot"
+swaks --server 127.0.0.1 --port 25 --to "$TO" --header "Subject: Apres reboot"
 sudo journalctl -u mailpit-relay -n 5 --no-pager
 ```
 
@@ -531,6 +537,7 @@ Notez ici chaque écart constaté et sa correction, au fil des essais.
 | 2026-11-09 | 3.2 | Relais démarré, mais `Mailpit /api/v1/search : Resolving timed out` en boucle. `UFW BLOCK` des requêtes du relais vers `10.89.25.1:53` (DNS interne `aardvark-dns`, filtré comme trafic entrant) | `ufw allow` UDP et TCP 53 de `10.89.25.0/24` vers `10.89.25.1`. Ajouté à la Partie 7, étape 1 |
 | 2026-11-09 | 3.2 – 3.4 | Après les règles DNS : `mailpit` résolu (`10.89.25.2`), connexion au port 8025 OK, le mail `Phase 0` est enregistré par l'API au 1er essai. L'API n'autorisant que l'IPv4, le relais sort donc bien en IPv4 (étape 3.4 validée du même coup) | — |
 | 2026-11-09 | 3.3 – 3.5 | `/health` → `{"status":"ok"}`, `dns_enabled: true`, aucun port publié | — |
+| 2026-11-09 | 4.1 | 1er envoi : aucun mail, car l'adresse d'exemple était restée dans la commande (`>/dev/null` masquait le refus). 2e envoi : tag `relayed`, mail resté non lu | Variable `TO` exportée en début de phase 4, utilisée par toutes les commandes des phases 4 et 5 |
 
 ---
 

@@ -219,16 +219,23 @@ final readonly class MessageRepository
         });
     }
 
+    private const string COLUMNS = <<<'SQL'
+        id, mailpit_id, message_id, from_name, from_address, to_addresses, cc_addresses,
+        bcc_addresses, reply_to, subject, snippet, return_path, message_date, tags, size,
+        attachments, smtp_username, mailpit_label, created_at, received_at, completed_at
+        SQL;
+
     /**
-     * Liste des messages, du plus récent au plus ancien (date de réception par Mailpit),
-     * avec la description de leurs pièces. Sans les en-têtes, pour rester léger.
+     * Liste des messages triés par date de réception par Mailpit (du plus récent au plus ancien,
+     * ou l'inverse), avec la description de leurs pièces. Sans les en-têtes, pour rester léger.
      *
      * @param list<string>|null $addresses ne garde que les mails dont un destinataire (To, Cc, Bcc)
      *                                     est dans cette liste ; null = tous les mails
      * @param bool $withBodies ajoute le corps du mail (« text », « html »)
+     * @param bool $oldestFirst du plus ancien au plus récent
      * @return array{total: int, messages: list<array<string, mixed>>}
      */
-    public function list(int $limit, int $offset, ?array $addresses = null, bool $withBodies = false): array
+    public function list(int $limit, int $offset, ?array $addresses = null, bool $withBodies = false, bool $oldestFirst = false): array
     {
         if ($addresses === []) {
             return ['total' => 0, 'messages' => []];
@@ -250,14 +257,13 @@ final readonly class MessageRepository
         $count->execute($params);
         $total = (int) $count->fetchColumn();
 
-        $bodies = $withBodies ? ', text_body, html_body' : '';
+        $columns = self::COLUMNS . ($withBodies ? ', text_body, html_body' : '');
+        $order = $oldestFirst ? 'created_at ASC, id ASC' : 'created_at DESC, id DESC';
         $statement = $pdo->prepare(<<<SQL
-            SELECT id, mailpit_id, message_id, from_name, from_address, to_addresses, cc_addresses,
-                   bcc_addresses, reply_to, subject, snippet, return_path, message_date, tags, size,
-                   attachments, smtp_username, mailpit_label, created_at, received_at, completed_at$bodies
+            SELECT $columns
             FROM mailpit_messages
             $where
-            ORDER BY created_at DESC, id DESC
+            ORDER BY $order
             LIMIT ? OFFSET ?
             SQL);
         $position = 1;
@@ -269,59 +275,54 @@ final readonly class MessageRepository
         $statement->execute();
         $rows = $statement->fetchAll();
 
-        $parts = [];
-        if ($rows !== []) {
-            $ids = array_map(static fn (array $row): int => (int) $row['id'], $rows);
-            $placeholders = implode(',', array_fill(0, count($ids), '?'));
-            $partStatement = $pdo->prepare(<<<SQL
-                SELECT message_id, part_id, kind, file_name, content_type, content_id, size, status
-                FROM mailpit_parts
-                WHERE message_id IN ($placeholders)
-                ORDER BY id
-                SQL);
-            $partStatement->execute($ids);
-            foreach ($partStatement->fetchAll() as $part) {
-                $parts[(int) $part['message_id']][] = [
-                    'part_id'      => (string) $part['part_id'],
-                    'kind'         => (string) $part['kind'],
-                    'file_name'    => (string) $part['file_name'],
-                    'content_type' => (string) $part['content_type'],
-                    'content_id'   => (string) $part['content_id'],
-                    'size'         => (int) $part['size'],
-                    'status'       => (string) $part['status'],
-                ];
-            }
-        }
+        $parts = $this->parts($pdo, array_map(static fn (array $row): int => (int) $row['id'], $rows));
 
-        $messages = array_map(static fn (array $row): array => [
-            'id'          => (string) $row['mailpit_id'],
-            'message_id'  => (string) $row['message_id'],
-            'from'        => $row['from_address'] === '' && $row['from_name'] === ''
-                ? null
-                : ['name' => (string) $row['from_name'], 'address' => (string) $row['from_address']],
-            'to'          => self::decode($row['to_addresses']),
-            'cc'          => self::decode($row['cc_addresses']),
-            'bcc'         => self::decode($row['bcc_addresses']),
-            'reply_to'    => self::decode($row['reply_to']),
-            'subject'     => (string) $row['subject'],
-            'snippet'     => (string) $row['snippet'],
-            'return_path' => (string) $row['return_path'],
-            'tags'        => self::decode($row['tags']),
-            'size'        => (int) $row['size'],
-            'attachments' => (int) $row['attachments'],
-            'username'    => $row['smtp_username'],
-            'label'       => $row['mailpit_label'],
-            'date'        => self::isoDate($row['message_date']),
-            'created_at'  => self::isoDate($row['created_at']),
-            'received_at' => self::isoDate($row['received_at']),
-            'complete'    => $row['completed_at'] !== null,
-            'parts'       => $parts[(int) $row['id']] ?? [],
-        ] + ($withBodies ? [
-            'text' => $row['text_body'],
-            'html' => $row['html_body'],
-        ] : []), $rows);
+        $messages = array_map(
+            static fn (array $row): array => self::present($row, $parts[(int) $row['id']] ?? [], $withBodies),
+            $rows,
+        );
 
         return ['total' => $total, 'messages' => $messages];
+    }
+
+    /**
+     * Un mail complet : champs de la liste, corps (« text », « html »), en-têtes (« headers »),
+     * et pièces avec leur fichier (« storage_path », relatif au dossier de stockage).
+     *
+     * @return array<string, mixed>|null
+     */
+    public function find(string $mailpitId): ?array
+    {
+        $pdo = $this->database->pdo();
+        $statement = $pdo->prepare(sprintf('SELECT %s, text_body, html_body, headers FROM mailpit_messages WHERE mailpit_id = ?', self::COLUMNS));
+        $statement->execute([$mailpitId]);
+        $row = $statement->fetch();
+        if ($row === false) {
+            return null;
+        }
+
+        $parts = $this->parts($pdo, [(int) $row['id']], withPath: true);
+
+        return self::present($row, $parts[(int) $row['id']] ?? [], true) + ['headers' => self::decode($row['headers'])];
+    }
+
+    /**
+     * Adresses ayant reçu au moins un mail (To, Cc, Bcc), par ordre alphabétique.
+     *
+     * @return array<string, int> adresse => nombre de mails
+     */
+    public function recipients(): array
+    {
+        $rows = $this->database->pdo()->query(
+            'SELECT address, COUNT(*) AS total FROM mailpit_message_recipients GROUP BY address ORDER BY address',
+        )->fetchAll();
+
+        $recipients = [];
+        foreach ($rows as $row) {
+            $recipients[(string) $row['address']] = (int) $row['total'];
+        }
+
+        return $recipients;
     }
 
     /**
@@ -447,6 +448,80 @@ final readonly class MessageRepository
             $params[] = (string) $address;
         }
         $pdo->prepare("INSERT IGNORE INTO mailpit_message_recipients (message_id, address) VALUES $values")->execute($params);
+    }
+
+    /**
+     * Pièces des messages demandés, par ID de message.
+     *
+     * @param list<int> $messageIds
+     * @return array<int, list<array<string, mixed>>>
+     */
+    private function parts(PDO $pdo, array $messageIds, bool $withPath = false): array
+    {
+        if ($messageIds === []) {
+            return [];
+        }
+
+        $placeholders = implode(',', array_fill(0, count($messageIds), '?'));
+        $statement = $pdo->prepare(<<<SQL
+            SELECT message_id, part_id, kind, file_name, content_type, content_id, size, status, storage_path
+            FROM mailpit_parts
+            WHERE message_id IN ($placeholders)
+            ORDER BY id
+            SQL);
+        $statement->execute($messageIds);
+
+        $parts = [];
+        foreach ($statement->fetchAll() as $part) {
+            $parts[(int) $part['message_id']][] = [
+                'part_id'      => (string) $part['part_id'],
+                'kind'         => (string) $part['kind'],
+                'file_name'    => (string) $part['file_name'],
+                'content_type' => (string) $part['content_type'],
+                'content_id'   => (string) $part['content_id'],
+                'size'         => (int) $part['size'],
+                'status'       => (string) $part['status'],
+            ] + ($withPath ? ['storage_path' => $part['storage_path']] : []);
+        }
+
+        return $parts;
+    }
+
+    /**
+     * Ligne de mailpit_messages telle que renvoyée par l'API.
+     *
+     * @param list<array<string, mixed>> $parts
+     * @return array<string, mixed>
+     */
+    private static function present(array $row, array $parts, bool $withBodies): array
+    {
+        return [
+            'id'          => (string) $row['mailpit_id'],
+            'message_id'  => (string) $row['message_id'],
+            'from'        => $row['from_address'] === '' && $row['from_name'] === ''
+                ? null
+                : ['name' => (string) $row['from_name'], 'address' => (string) $row['from_address']],
+            'to'          => self::decode($row['to_addresses']),
+            'cc'          => self::decode($row['cc_addresses']),
+            'bcc'         => self::decode($row['bcc_addresses']),
+            'reply_to'    => self::decode($row['reply_to']),
+            'subject'     => (string) $row['subject'],
+            'snippet'     => (string) $row['snippet'],
+            'return_path' => (string) $row['return_path'],
+            'tags'        => self::decode($row['tags']),
+            'size'        => (int) $row['size'],
+            'attachments' => (int) $row['attachments'],
+            'username'    => $row['smtp_username'],
+            'label'       => $row['mailpit_label'],
+            'date'        => self::isoDate($row['message_date']),
+            'created_at'  => self::isoDate($row['created_at']),
+            'received_at' => self::isoDate($row['received_at']),
+            'complete'    => $row['completed_at'] !== null,
+            'parts'       => $parts,
+        ] + ($withBodies ? [
+            'text' => $row['text_body'],
+            'html' => $row['html_body'],
+        ] : []);
     }
 
     /**

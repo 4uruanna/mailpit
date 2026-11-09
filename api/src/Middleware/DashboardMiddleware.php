@@ -15,7 +15,8 @@ use Psr\Http\Server\RequestHandlerInterface;
  * Commun à toutes les pages du Dashboard (/v1/app) :
  *  - démarre la session (cookie Secure si la page est en HTTPS) ;
  *  - refuse tout formulaire POST sans le bon jeton anti-CSRF (champ « _csrf ») ;
- *  - ajoute les en-têtes de sécurité (pas de cache, pas d'iframe, pas de script).
+ *  - ajoute les en-têtes de sécurité (pas de cache, pas d'iframe, pas de script),
+ *    sauf ceux que la page a déjà fixés.
  */
 final readonly class DashboardMiddleware implements MiddlewareInterface
 {
@@ -40,11 +41,20 @@ final readonly class DashboardMiddleware implements MiddlewareInterface
 
         $response ??= $handler->handle($request);
 
-        return $response
-            ->withHeader('Cache-Control', 'no-store')
-            ->withHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
-            ->withHeader('X-Frame-Options', 'DENY')
-            ->withHeader('X-Content-Type-Options', 'nosniff')
-            ->withHeader('Referrer-Policy', 'same-origin');
+        // Une page peut fixer ses propres règles (ex. le corps HTML d'un mail, affiché dans une iframe).
+        $headers = [
+            'Cache-Control'           => 'no-store',
+            'Content-Security-Policy' => "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; frame-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+            'X-Frame-Options'         => 'DENY',
+            'X-Content-Type-Options'  => 'nosniff',
+            'Referrer-Policy'         => 'same-origin',
+        ];
+        foreach ($headers as $name => $value) {
+            if (!$response->hasHeader($name)) {
+                $response = $response->withHeader($name, $value);
+            }
+        }
+
+        return $response;
     }
 }

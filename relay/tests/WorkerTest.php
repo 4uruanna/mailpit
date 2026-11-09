@@ -234,9 +234,73 @@ final class WorkerTest extends TestCase
         $run = $this->runWorker(2, ['RELAY_BATCH_SIZE' => '2']);
 
         self::assertSame([true, false], $run['syncs']);
-        // Mailpit renvoie les 2 plus récents : le Worker les traite du plus ancien au plus récent,
-        // puis le lot suivant.
-        self::assertSame(['moyen', 'recent', 'ancien'], array_keys($this->state->read()['api']['messages']));
+        // Mailpit renvoie les plus récents d'abord : le Worker lit d'abord le lot des plus anciens.
+        self::assertSame(['ancien', 'moyen', 'recent'], array_keys($this->state->read()['api']['messages']));
+    }
+
+    public function testBacklogIsProcessedOldestFirstAcrossBatches(): void
+    {
+        foreach (['m1', 'm2', 'm3', 'm4', 'm5'] as $id) {
+            $this->addMessage($id);
+        }
+
+        $run = $this->runWorker(3, ['RELAY_BATCH_SIZE' => '2']);
+
+        // Deux mails par passage, toujours les plus anciens restants.
+        self::assertSame([true, true, false], $run['syncs']);
+        self::assertSame(['m1', 'm2', 'm3', 'm4', 'm5'], array_keys($this->state->read()['api']['messages']));
+        self::assertSame(5, $this->countRequests('mailpit PUT /api/v1/tags'));
+
+        // Recherches : le total (les plus récents), puis le lot des plus anciens, à chaque passage.
+        $searches = array_map(
+            static fn (array $request): string => $request['query']['start'] . '+' . $request['query']['limit'],
+            array_values(array_filter($this->state->read()['requests'], static fn (array $request): bool => $request['path'] === '/api/v1/search')),
+        );
+        self::assertSame(['0+2', '3+2', '0+2', '1+2', '0+2'], $searches);
+    }
+
+    public function testDeferredOldestBatchDoesNotBlockNewerMessages(): void
+    {
+        foreach (['m1', 'm2', 'm3', 'm4', 'm5'] as $id) {
+            $this->addMessage($id);
+        }
+        // Les deux plus anciens échouent : nouvel essai dans 30 s.
+        $this->setApi('failing', ['m1' => 500, 'm2' => 503]);
+
+        $run = $this->runWorker(4, ['RELAY_BATCH_SIZE' => '2']);
+
+        // 1er passage : m1 et m2 échouent. 2e : leur lot est entièrement en attente, le Worker
+        // passe au lot suivant (m3, m4). 3e : m5. 4e : il ne reste que m1 et m2, en attente.
+        self::assertSame([true, true, false, false], $run['syncs']);
+        self::assertSame(['m3', 'm4', 'm5'], array_keys($this->state->read()['api']['messages']));
+        self::assertSame(5, $this->countRequests('api POST /v1/messages'), 'm1 et m2 essayés une seule fois chacun');
+        self::assertStringContainsString('mail m1 : échec de l\'essai 1', $run['log']);
+        self::assertStringContainsString('mail m2 : échec de l\'essai 1', $run['log']);
+        self::assertStringNotContainsString('essai 2', $run['log']);
+
+        $messages = $this->state->read()['mailpit']['messages'];
+        self::assertSame([], $messages['m1']['Tags']);
+        self::assertSame([], $messages['m2']['Tags']);
+        self::assertSame(['relayed'], $messages['m5']['Tags']);
+    }
+
+    public function testMessageArrivingDuringAPassTriggersAnotherPass(): void
+    {
+        foreach (['m1', 'm2', 'm3', 'm4', 'm5'] as $id) {
+            $this->addMessage($id);
+        }
+        // m6 arrive dans Mailpit pendant que le Worker relaie m3 : les positions se décalent.
+        $this->addMessage('m6', summary: ['_arrives_after' => 'm3']);
+        $this->setApi('failing', ['m1' => 500]);
+
+        $run = $this->runWorker(3, ['RELAY_BATCH_SIZE' => '2']);
+
+        // 1er passage : m1 (échec) et m2. 2e : m1 en attente, m3, puis le lot [m6, m5] lu après
+        // l'arrivée de m6 : m4 a sauté, le décalage est repéré et le passage suivant est immédiat.
+        // 3e : m4.
+        self::assertSame([true, true, false], $run['syncs']);
+        self::assertSame(['m2', 'm3', 'm5', 'm6', 'm4'], array_keys($this->state->read()['api']['messages']));
+        self::assertStringNotContainsString('essai 2', $run['log'], 'm1 attend toujours son nouvel essai');
     }
 
     public function testMessageDeletedFromMailpitIsSkipped(): void

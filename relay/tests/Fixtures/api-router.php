@@ -10,9 +10,9 @@ declare(strict_types=1);
  *   POST /v1/messages/{id}/part/{partId}  enregistre une pièce si l'en-tête X-Content-SHA256 correspond
  *
  * État : api.token (jeton attendu), api.max_part_size (pièces plus grosses : « too_large »),
- * api.message_status / api.part_status (code d'erreur forcé, ou null), api.messages (ID => JSON
- * reçu + « _label »), api.parts (« ID/PartID » => {sha256, size}). Chaque requête est ajoutée
- * à « requests ».
+ * api.message_status / api.part_status (code d'erreur forcé, ou null), api.failing (ID => code
+ * d'erreur forcé pour ce mail seulement), api.messages (ID => JSON reçu + « _label »), api.parts
+ * (« ID/PartID » => {sha256, size}). Chaque requête est ajoutée à « requests ».
  */
 
 require __DIR__ . '/../Support/FakeState.php';
@@ -69,6 +69,9 @@ if ($method === 'POST' && $path === '/v1/messages') {
     $message = json_decode($body, true);
     if (($headers['content-type'] ?? '') !== 'application/json' || !is_array($message) || !is_string($message['ID'] ?? null)) {
         $reply(422, ['error' => 'mail invalide']);
+    }
+    if (isset($api['failing'][$message['ID']])) {
+        $reply($api['failing'][$message['ID']], ['error' => 'erreur simulée pour ce mail']);
     }
 
     $result = $state->update(static function (array &$data) use ($message, $headers, $completion): array {

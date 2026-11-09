@@ -25,6 +25,7 @@ Ce que le relais apporte :
 - **Le mail complet** : en-têtes, texte, HTML, pièces jointes et images intégrées (5 Mo maximum par pièce, réglable côté API). Tout est enregistré par l'API : le relais ne garde rien.
 - **Aucun mail perdu.** Le relais ne pose le tag `relayed` sur un mail dans Mailpit qu'une fois que l'API a confirmé avoir **tout** enregistré. Tant que ce n'est pas le cas, il réessaie (30 s, 1 min, 2 min… puis toutes les heures, sans limite), y compris après un redémarrage. C'est Mailpit qui sert de file d'attente. Mailpit seul, lui, n'essaie qu'une fois.
 - **Un mail à la fois.** Le relais termine un mail (message, pièces jointes une par une, tag) avant de passer au suivant : il n'envoie jamais deux requêtes en même temps à l'API.
+- **Les plus anciens d'abord.** Après une panne de l'API, le relais rattrape son retard du plus ancien au plus récent : ce sont les plus anciens que Mailpit supprime en premier. Un mail qui attend son nouvel essai ne bloque pas les suivants.
 - **Les 1000 derniers mails, des deux côtés.** Mailpit (`MP_MAX_MESSAGES=1000`, [Partie 1](01-podman.md#étape-3--créer-le-fichier-de-configuration-de-mailpit)) et l'API (`webhook.max_messages`) suppriment les plus anciens au-delà de 1000.
 - **Un jeton des deux côtés.** Le relais s'authentifie auprès de l'API avec un jeton configuré dans `relay.env` **et** dans le `config.php` de l'API, envoyé dans un en-tête (jamais dans l'URL).
 - **Rien n'est exposé.** L'interface de Mailpit reste sur `127.0.0.1`, et le relais n'ouvre aucun port sur le serveur.

@@ -16,7 +16,8 @@ declare(strict_types=1);
  *
  * État : mailpit.auth (« utilisateur:motdepasse » attendu, ou null), mailpit.messages (ID => mail,
  * du plus ancien au plus récent ; champs du résumé, plus « _message », « _headers », « _parts »
- * (PartID => contenu en base64) et « _gone » (mail supprimé entre la recherche et la lecture)).
+ * (PartID => contenu en base64), « _gone » (mail supprimé entre la recherche et la lecture) et
+ * « _arrives_after » (ID : le mail n'arrive dans la recherche qu'une fois ce mail reçu par la fausse API)).
  * Chaque requête est ajoutée à « requests ».
  */
 
@@ -65,6 +66,12 @@ if ($method === 'GET' && $path === '/api/v1/search') {
     preg_match_all('/!tag:(\S+)/', (string) ($query['query'] ?? ''), $match);
     $excluded = $match[1];
     $all = $state->read()['mailpit']['messages'] ?? [];
+    // « _arrives_after » : le mail n'apparaît qu'une fois ce mail-là reçu par la fausse API.
+    $received = $state->read()['api']['messages'] ?? [];
+    $all = array_filter(
+        $all,
+        static fn (array $message): bool => !isset($message['_arrives_after']) || isset($received[$message['_arrives_after']]),
+    );
     $found = array_values(array_filter(
         array_reverse($all),
         static fn (array $message): bool => array_intersect($message['Tags'] ?? [], $excluded) === [],

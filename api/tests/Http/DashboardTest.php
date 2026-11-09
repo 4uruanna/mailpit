@@ -146,6 +146,8 @@ final class DashboardTest extends AppTestCase
         $response = $this->request('GET', '/v1/app/messages', ip: self::OTHER_IP);
         self::assertSame(200, $response->getStatusCode());
         self::assertStringContainsString('Sujet m1', (string) $response->getBody());
+        // Cases à cocher de la suppression : jamais recochées par le navigateur au retour sur la liste.
+        self::assertMatchesRegularExpression('#<form [^>]*data-selection autocomplete="off"#', (string) $response->getBody());
         $csrf = self::csrf($response);
 
         // Connecté, mais formulaire sans jeton anti-CSRF : refusé, retour à la liste.

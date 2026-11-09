@@ -93,7 +93,7 @@ final class Kernel
         $session = new Session($settings->basePath . '/v1/app', $settings->sessionLifetime);
         $view = new View(dirname(__DIR__) . '/templates', $settings->basePath, new DateTimeZone($settings->timezone), $session, $responseFactory);
         $signIn = new SignInController(new LoginThrottle($admins, new LoginAttemptRepository($database)), $session, $view, $ipResolver);
-        $messagesPage = new MessagesController($messages, $files, $view);
+        $messagesPage = new MessagesController($messages, $files, $session, $view);
         $tokensPage = new TokensController($tokens, $messages, $session, $view);
 
         //   POST   /v1/messages                     relais : le mail (JSON)
@@ -120,6 +120,8 @@ final class Kernel
             $v1->group('/app', function (RouteCollectorProxy $dashboard) use ($session, $view, $admins, $signIn, $messagesPage, $tokensPage): void {
                 $dashboard->get('/signin', [$signIn, 'show']);
                 $dashboard->post('/signin', [$signIn, 'submit']);
+                // Script des pages (confirmations, sélection) : seul JavaScript autorisé par la CSP.
+                $dashboard->get('/dashboard.js', static fn (): ResponseInterface => $view->script('dashboard.js'));
 
                 $dashboard->group('', function (RouteCollectorProxy $admin) use ($view, $signIn, $messagesPage, $tokensPage): void {
                     $admin->get('', static fn (): ResponseInterface => $view->redirect('/v1/app/messages'));
@@ -128,6 +130,8 @@ final class Kernel
                     $admin->get('/messages/{id:[A-Za-z0-9_-]+}', [$messagesPage, 'show']);
                     $admin->get('/messages/{id:[A-Za-z0-9_-]+}/html', [$messagesPage, 'html']);
                     $admin->get('/messages/{id:[A-Za-z0-9_-]+}/parts/{partId:[0-9.]+}', [$messagesPage, 'download']);
+                    $admin->post('/messages/delete', [$messagesPage, 'deleteSelected']);
+                    $admin->post('/messages/{id:[A-Za-z0-9_-]+}/delete', [$messagesPage, 'deleteOne']);
                     $admin->get('/tokens', [$tokensPage, 'index']);
                     $admin->post('/tokens', [$tokensPage, 'create']);
                     $admin->get('/tokens/{id:[0-9]+}', [$tokensPage, 'show']);

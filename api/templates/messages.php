@@ -9,6 +9,7 @@
  * @var callable $e
  * @var callable $url
  * @var callable $date
+ * @var string $csrf
  */
 
 $recipientList = static function (array $message): string {
@@ -81,10 +82,18 @@ $detailQuery = $filter->query();
 </p>
 
 <?php if ($messages !== []): ?>
+<form method="post" action="<?= $e($url('/v1/app/messages/delete')) ?>" data-selection
+      data-confirm="Supprimer définitivement {n} mail(s) et leurs pièces jointes ? (Ils restent dans Mailpit.)">
+<input type="hidden" name="_csrf" value="<?= $e($csrf) ?>">
+<input type="hidden" name="back" value="<?= $e($filter->query()) ?>">
+<div class="toolbar">
+    <button type="submit" class="danger" data-needs-selection>Supprimer la sélection (<span data-selection-count>0</span>)</button>
+</div>
 <div class="table-wrap">
-    <table>
+    <table class="selectable">
         <thead>
             <tr>
+                <th class="check"><input type="checkbox" data-select-all aria-label="Tout sélectionner sur cette page"></th>
                 <th>
                     <a href="<?= $e($url('/v1/app/messages' . $filter->query(['page' => 1, 'oldestFirst' => !$filter->oldestFirst]))) ?>" title="Inverser l'ordre">
                         Reçu le <?= $filter->oldestFirst ? '↑' : '↓' ?>
@@ -97,6 +106,7 @@ $detailQuery = $filter->query();
         <?php foreach ($messages as $message): ?>
             <?php $link = $url('/v1/app/messages/' . rawurlencode($message['id']) . $detailQuery); ?>
             <tr>
+                <td class="check"><input type="checkbox" name="ids[]" value="<?= $e($message['id']) ?>" aria-label="Sélectionner « <?= $e($message['subject']) ?> »"></td>
                 <td class="nowrap"><a href="<?= $e($link) ?>"><?= $e($date($message['created_at'])) ?></a></td>
                 <td>
                     <?php if ($message['from'] !== null): ?>
@@ -118,6 +128,7 @@ $detailQuery = $filter->query();
         </tbody>
     </table>
 </div>
+</form>
 <?php elseif ($total > 0): ?>
 <div class="card empty">Cette page est vide. <a href="<?= $e($url('/v1/app/messages' . $filter->query(['page' => 1]))) ?>">Retour à la première page</a></div>
 <?php endif; ?>

@@ -18,6 +18,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
+<script src="<?= $e($url('/v1/app/dashboard.js')) ?>" defer></script>
 <title><?= $e(($title !== null ? $title . ' · ' : '') . 'Mailpit Dashboard') ?></title>
 <style>
 :root {
@@ -63,6 +64,15 @@ button, .button {
 }
 button.link { background: none; border: none; color: var(--accent); padding: 0; font-weight: normal; }
 button.danger { background: none; border-color: var(--danger); color: var(--danger); padding: 4px 10px; font-weight: normal; }
+button.danger:hover:not(:disabled) { background: var(--danger); color: var(--surface); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+.toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+.title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+.title-row h1 { margin: 0; overflow-wrap: anywhere; }
+.title-row form { margin: 0; }
+th.check, td.check { width: 1%; padding-right: 0; }
+th.check input, td.check input { width: 16px; height: 16px; margin: 3px 0 0; cursor: pointer; }
+tr.selected td { background: var(--code-bg); }
 form.inline { display: inline; margin: 0; }
 .row { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
 .row > .grow { flex: 1; min-width: 220px; }

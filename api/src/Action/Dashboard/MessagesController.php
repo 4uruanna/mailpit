@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Action\Dashboard;
 
 use App\Dashboard\MessageFilter;
+use App\Dashboard\Session;
 use App\Dashboard\View;
 use App\Mailpit\Message;
 use App\Persistence\FileStore;
@@ -19,14 +20,23 @@ use Slim\Psr7\Stream;
  * GET /v1/app/messages/{id}                     un mail : en-têtes, corps, pièces jointes
  * GET /v1/app/messages/{id}/html                corps HTML du mail, affiché dans un cadre isolé (iframe)
  * GET /v1/app/messages/{id}/parts/{partId}      téléchargement d'une pièce jointe
+ * POST /v1/app/messages/delete                  supprime les mails cochés dans la liste (champ ids[])
+ * POST /v1/app/messages/{id}/delete             supprime un mail
+ *
+ * Une suppression efface le mail de la base (pièces et destinataires compris) et ses fichiers.
+ * Le mail reste dans Mailpit. La confirmation est demandée dans le navigateur (dashboard.js).
  */
 final readonly class MessagesController
 {
     public const int PER_PAGE = 50;
 
+    /** Nombre maximal de mails supprimés en une fois. */
+    public const int MAX_DELETE = 500;
+
     public function __construct(
         private MessageRepository $messages,
         private FileStore $files,
+        private Session $session,
         private View $view,
     ) {
     }
@@ -140,6 +150,82 @@ final readonly class MessagesController
             ->withHeader('Content-Disposition', sprintf('attachment; filename="%s"; filename*=UTF-8\'\'%s', $ascii, rawurlencode($name)))
             ->withHeader('Content-Security-Policy', "sandbox; default-src 'none'")
             ->withHeader('X-Content-Type-Options', 'nosniff');
+    }
+
+    public function deleteSelected(ServerRequestInterface $request): ResponseInterface
+    {
+        $body = (array) $request->getParsedBody();
+        $back = $this->backTo($body);
+
+        $ids = $body['ids'] ?? [];
+        $ids = array_values(array_unique(array_filter(
+            is_array($ids) ? $ids : [],
+            static fn (mixed $id): bool => is_string($id) && preg_match(Message::ID_PATTERN, $id) === 1,
+        )));
+        if ($ids === []) {
+            return $this->back($back, 'error', 'Aucun mail sélectionné.');
+        }
+        if (count($ids) > self::MAX_DELETE) {
+            return $this->back($back, 'error', sprintf('%d mails au maximum par suppression.', self::MAX_DELETE));
+        }
+
+        $deleted = 0;
+        foreach ($ids as $id) {
+            if ($this->deleteMessage($id)) {
+                $deleted++;
+            }
+        }
+
+        return $this->back($back, 'success', match ($deleted) {
+            0       => 'Aucun mail supprimé : ils l\'avaient déjà été.',
+            1       => '1 mail supprimé.',
+            default => sprintf('%d mails supprimés.', $deleted),
+        });
+    }
+
+    /** @param array{id: string} $args */
+    public function deleteOne(ServerRequestInterface $request, ResponseInterface $response, array $args): ResponseInterface
+    {
+        $back = $this->backTo((array) $request->getParsedBody());
+        if (preg_match(Message::ID_PATTERN, $args['id']) !== 1 || !$this->deleteMessage($args['id'])) {
+            return $this->back($back, 'error', 'Ce mail n\'existe plus.');
+        }
+
+        return $this->back($back, 'success', '1 mail supprimé.');
+    }
+
+    /** Supprime un mail de la base, puis ses fichiers. false s'il n'existait pas. */
+    private function deleteMessage(string $id): bool
+    {
+        if (!$this->messages->delete($id)) {
+            return false;
+        }
+        if (!$this->files->deleteMessage($id)) {
+            error_log(sprintf('[delete] fichiers de %s pas tous effacés', $id));
+        }
+
+        return true;
+    }
+
+    /**
+     * Liste à retrouver après la suppression : les filtres sont relus dans le champ « back »
+     * (chaîne de requête de la liste), puis réécrits : rien d'autre ne peut passer dans l'URL.
+     *
+     * @param array<string, mixed> $body
+     */
+    private function backTo(array $body): string
+    {
+        $back = is_string($body['back'] ?? null) ? ltrim($body['back'], '?') : '';
+        parse_str(substr($back, 0, 8192), $query);
+
+        return '/v1/app/messages' . MessageFilter::fromQuery($query)->query();
+    }
+
+    private function back(string $path, string $type, string $message): ResponseInterface
+    {
+        $this->session->flash('message', ['type' => $type, 'message' => $message]);
+
+        return $this->view->redirect($path);
     }
 
     /** @return array<string, mixed> */

@@ -47,12 +47,6 @@ final readonly class Config
 
     public static function fromEnv(): self
     {
-        if (self::env('RELAY_TARGET_URL') !== null) {
-            throw new InvalidArgumentException(
-                'RELAY_TARGET_URL n\'existe plus : remplacez-la par RELAY_API_URL, l\'adresse de base de l\'API (ex. https://api.mondomaine.fr)',
-            );
-        }
-
         $api = self::env('RELAY_API_URL');
         if ($api === null || !preg_match('#^https?://#i', $api) || filter_var($api, FILTER_VALIDATE_URL) === false) {
             throw new InvalidArgumentException('RELAY_API_URL manquante ou invalide (ex. https://api.mondomaine.fr)');

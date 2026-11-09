@@ -1,5 +1,10 @@
 -- Schéma MySQL 8.4 de l'API webhook Mailpit.
 -- À importer une fois via phpMyAdmin (Espace client OVH > Bases de données > « Aller sur phpMyAdmin » > Importer).
+--
+-- NOUVELLE INSTALLATION : ce fichier suffit. Il contient déjà toutes les mises à jour
+-- (upgrade-001-corps.sql, upgrade-002-pieces-jointes.sql, upgrade-003-sans-eml.sql) :
+-- ne les importez PAS. Elles servent uniquement à mettre à jour des tables créées
+-- avec une version précédente de ce fichier.
 
 CREATE TABLE IF NOT EXISTS mailpit_messages (
     id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,

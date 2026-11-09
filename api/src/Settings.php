@@ -39,6 +39,8 @@ final readonly class Settings
         public string $timezone = 'Europe/Paris',
         /** HTTPS obligatoire (redirection, 403, HSTS) : false seulement en développement local. */
         public bool $forceHttps = true,
+        /** Mails supprimés ce nombre de jours après leur réception par Mailpit, 0 = jamais. */
+        public int $maxAgeDays = 7,
     ) {
     }
 
@@ -110,6 +112,7 @@ final readonly class Settings
             sessionLifetime: $sessionLifetime,
             timezone: $timezone,
             forceHttps: $forceHttps,
+            maxAgeDays: self::maxAgeDays($webhook),
         );
     }
 
@@ -118,6 +121,16 @@ final readonly class Settings
         $value = $section['max_messages'] ?? 1000;
         if (!is_int($value) || $value < 0) {
             throw new InvalidArgumentException('« webhook.max_messages » doit être un entier positif (0 = sans limite)');
+        }
+
+        return $value;
+    }
+
+    private static function maxAgeDays(array $section): int
+    {
+        $value = $section['max_age_days'] ?? 7;
+        if (!is_int($value) || $value < 0 || $value > 36500) {
+            throw new InvalidArgumentException('« webhook.max_age_days » doit être un nombre entier de jours, de 0 (jamais) à 36500');
         }
 
         return $value;

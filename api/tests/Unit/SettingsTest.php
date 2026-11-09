@@ -35,6 +35,7 @@ final class SettingsTest extends TestCase
         self::assertSame(16 * 1024 * 1024, $settings->maxBodySize);
         self::assertSame(5 * 1024 * 1024, $settings->maxPartSize);
         self::assertSame(1000, $settings->maxMessages);
+        self::assertSame(7, $settings->maxAgeDays, 'mails supprimés au bout de 7 jours par défaut');
         self::assertSame(dirname(__DIR__, 2) . '/var/messages', $settings->storageDir);
         self::assertSame([], $settings->trustedProxies);
         self::assertSame('X-Forwarded-For', $settings->proxyHeader);
@@ -57,6 +58,7 @@ final class SettingsTest extends TestCase
                 'max_body_size'       => 1000,
                 'max_attachment_size' => 500,
                 'max_messages'        => 0,
+                'max_age_days'        => 0,
                 'storage_dir'         => '/data/messages/',
             ],
             'app'   => ['session_lifetime' => 60, 'timezone' => 'UTC'],
@@ -72,6 +74,7 @@ final class SettingsTest extends TestCase
         self::assertSame(1000, $settings->maxBodySize);
         self::assertSame(500, $settings->maxPartSize);
         self::assertSame(0, $settings->maxMessages);
+        self::assertSame(0, $settings->maxAgeDays);
         self::assertSame('/data/messages', $settings->storageDir);
         self::assertSame(['10.0.0.0/8'], $settings->trustedProxies);
         self::assertSame('X-Real-IP', $settings->proxyHeader);
@@ -104,6 +107,9 @@ final class SettingsTest extends TestCase
         yield 'max_attachment_size texte' => [['webhook' => ['max_attachment_size' => '5M'] + $webhook] + $config, '« webhook.max_attachment_size »'];
         yield 'max_messages négatif'    => [['webhook' => ['max_messages' => -1] + $webhook] + $config, '« webhook.max_messages » doit être un entier positif'];
         yield 'max_messages texte'      => [['webhook' => ['max_messages' => '1000'] + $webhook] + $config, '« webhook.max_messages »'];
+        yield 'max_age_days négatif'    => [['webhook' => ['max_age_days' => -1] + $webhook] + $config, '« webhook.max_age_days » doit être un nombre entier de jours, de 0 (jamais) à 36500'];
+        yield 'max_age_days texte'      => [['webhook' => ['max_age_days' => '7d'] + $webhook] + $config, '« webhook.max_age_days »'];
+        yield 'max_age_days trop grand' => [['webhook' => ['max_age_days' => 36501] + $webhook] + $config, '« webhook.max_age_days »'];
         yield 'allowed_ips pas une liste' => [['webhook' => ['allowed_ips' => '203.0.113.10'] + $webhook] + $config, '« webhook.allowed_ips » doit être une liste'];
         yield 'trusted_proxies pas une liste' => [['proxy' => ['trusted_proxies' => '10.0.0.1']] + $config, '« proxy.trusted_proxies » doit être une liste'];
         yield 'session trop courte'     => [['app' => ['session_lifetime' => 59]] + $config, '« app.session_lifetime »'];
@@ -130,6 +136,7 @@ final class SettingsTest extends TestCase
 
         self::assertSame(['203.0.113.10'], $settings->allowedIps);
         self::assertSame(1000, $settings->maxMessages);
+        self::assertSame(7, $settings->maxAgeDays);
         self::assertTrue($settings->forceHttps);
     }
 }

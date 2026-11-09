@@ -128,8 +128,8 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST https://api.mondomaine.fr/v1/me
 Faites ce test **depuis le serveur Mailpit** (il fonctionne aussi depuis votre ordinateur, le filtre IP ne protégeant que les routes du relais). On vérifie que les fichiers sont **vraiment** protégés : un fichier qu'Apache servirait directement, sans passer par PHP, répondrait `200`.
 
 ```bash
-for p in config.php .ovhconfig .htaccess composer.json composer.lock vendor/autoload.php src/Kernel.php sql/schema.sql var/log/api.log public/.htaccess templates/layout.php bin/create-admin.php tests/bootstrap.php phpunit.xml.dist; do
-  printf '%-22s ' "$p"; curl -4 -s -o /dev/null -w '%{http_code}\n' "https://api.mondomaine.fr/$p"
+for p in config.php .ovhconfig .htaccess composer.json composer.lock vendor/autoload.php src/Kernel.php sql/schema.sql var/log/api.log public/.htaccess templates/layout.php bin/create-admin.php bin/cleanup.php var/messages/.maintenance tests/bootstrap.php phpunit.xml.dist; do
+  printf '%-26s ' "$p"; curl -4 -s -o /dev/null -w '%{http_code}\n' "https://api.mondomaine.fr/$p"
 done
 ```
 
@@ -217,10 +217,12 @@ On envoie à la main ce que fera le relais : le mail en JSON, puis sa pièce joi
 ```bash
 curl -4 -s -w '\n%{http_code}\n' -X POST "$API/v1/messages" \
   -H "Authorization: Bearer $JETON" -H 'Content-Type: application/json' \
-  -d '{"ID":"test-manuel-1","Created":"2026-01-01T12:00:00Z","Subject":"Test manuel","From":{"Name":"","Address":"moi@exemple.fr"},"To":[],"Text":"Bonjour","Parts":[{"PartID":"2","Kind":"attachment","FileName":"test.txt","ContentType":"text/plain","ContentID":"","Size":5}]}'
+  -d '{"ID":"test-manuel-1","Created":"'"$(date -u +%FT%TZ)"'","Subject":"Test manuel","From":{"Name":"","Address":"moi@exemple.fr"},"To":[],"Text":"Bonjour","Parts":[{"PartID":"2","Kind":"attachment","FileName":"test.txt","ContentType":"text/plain","ContentID":"","Size":5}]}'
 ```
 
 ✅ Attendu : `{"id":"test-manuel-1","status":"created","complete":false,"missing":["2"],"too_large":[]}` puis `201`.
+
+💡 `Created` (réception par Mailpit) vaut l'heure actuelle (`date -u`) : un mail de plus de 7 jours serait supprimé par le nettoyage automatique de l'API dès cette requête (`webhook.max_age_days`), et l'envoi de sa pièce répondrait `404`.
 
 Envoyez la pièce attendue (`missing`) :
 
@@ -271,7 +273,7 @@ Ce test vérifie que l'hébergement accepte des requêtes de la taille maximale 
 head -c 5242880 /dev/urandom > /tmp/gros.bin
 curl -4 -s -o /dev/null -w '%{http_code}\n' -X POST "$API/v1/messages" \
   -H "Authorization: Bearer $JETON" -H 'Content-Type: application/json' \
-  -d '{"ID":"test-manuel-5mo","Created":"2026-01-01T12:00:00Z","Subject":"Test 5 Mo","From":{"Name":"","Address":"moi@exemple.fr"},"To":[],"Parts":[{"PartID":"2","Kind":"attachment","FileName":"gros.bin","ContentType":"application/octet-stream","ContentID":"","Size":5242880}]}'
+  -d '{"ID":"test-manuel-5mo","Created":"'"$(date -u +%FT%TZ)"'","Subject":"Test 5 Mo","From":{"Name":"","Address":"moi@exemple.fr"},"To":[],"Parts":[{"PartID":"2","Kind":"attachment","FileName":"gros.bin","ContentType":"application/octet-stream","ContentID":"","Size":5242880}]}'
 curl -4 -s -w '\n%{http_code}\n' -X POST "$API/v1/messages/test-manuel-5mo/part/2" \
   -H "Authorization: Bearer $JETON" -H 'Content-Type: application/octet-stream' \
   -H "X-Content-SHA256: $(sha256sum /tmp/gros.bin | cut -d' ' -f1)" \
@@ -589,9 +591,9 @@ sudo journalctl -u mailpit-relay -n 5 --no-pager
    ```sql
    DELETE FROM mailpit_messages WHERE created_at >= 'AAAA-MM-JJ HH:MM:SS';
    ```
-   Les pièces (`mailpit_parts`) partent avec leurs mails. Supprimez aussi par FTP les dossiers `var/messages/<ID>/` correspondants : la purge automatique ne les retire plus, puisque leurs lignes n'existent plus. La rétention à 1000 mails ferait de toute façon disparaître les tests, base **et** fichiers, si vous les laissez.
+   Les pièces (`mailpit_parts`) partent avec leurs mails. Les dossiers `var/messages/<ID>/` correspondants sont effacés par le nettoyage de l'API (automatique après une requête du relais, ou `php bin/cleanup.php`) une fois restés 1 heure sans modification. Si vous les laissez, les tests disparaissent de toute façon au bout de 7 jours (`webhook.max_age_days`), base **et** fichiers.
 5. ☁️ **`config.php`** : vérifiez `'debug' => false` et `'force_https' => true`.
-6. ☁️ **`var/log/api.log`** : relisez-le, puis videz-le. Il garde la trace des tests 401 et 403 (`[auth]`, `[ip-filter]`, `[https]`). Toute autre erreur (PHP, base de données, `[prune]`) est à examiner.
+6. ☁️ **`var/log/api.log`** : relisez-le, puis videz-le. Il garde la trace des tests 401 et 403 (`[auth]`, `[ip-filter]`, `[https]`). Les lignes `[maintenance] mails supprimés : …` résument les nettoyages automatiques. Toute autre erreur (PHP, base de données, `[prune]`, `[maintenance] nettoyage impossible`) est à examiner.
 7. Cochez les phases dans le [suivi](#suivi) en haut de page.
 
 ---

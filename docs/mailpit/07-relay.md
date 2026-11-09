@@ -26,7 +26,7 @@ Ce que le relais apporte :
 - **Aucun mail perdu.** Le relais ne pose le tag `relayed` sur un mail dans Mailpit qu'une fois que l'API a confirmé avoir **tout** enregistré. Tant que ce n'est pas le cas, il réessaie (30 s, 1 min, 2 min… puis toutes les heures, sans limite), y compris après un redémarrage. C'est Mailpit qui sert de file d'attente. Mailpit seul, lui, n'essaie qu'une fois.
 - **Un mail à la fois.** Le relais termine un mail (message, pièces jointes une par une, tag) avant de passer au suivant : il n'envoie jamais deux requêtes en même temps à l'API.
 - **Les plus anciens d'abord.** Après une panne de l'API, le relais rattrape son retard du plus ancien au plus récent : ce sont les plus anciens que Mailpit supprime en premier. Un mail qui attend son nouvel essai ne bloque pas les suivants.
-- **Les 1000 derniers mails, des deux côtés.** Mailpit (`MP_MAX_MESSAGES=1000`, [Partie 1](01-podman.md#étape-3--créer-le-fichier-de-configuration-de-mailpit)) et l'API (`webhook.max_messages`) suppriment les plus anciens au-delà de 1000.
+- **7 jours et 1000 mails au plus, des deux côtés.** Mailpit (`MP_MAX_MESSAGES=1000` et `MP_MAX_AGE=7d`, [Partie 1](01-podman.md#étape-3--créer-le-fichier-de-configuration-de-mailpit)) et l'API (`webhook.max_messages` et `webhook.max_age_days`) suppriment les plus anciens au-delà de 1000, et ceux reçus il y a plus de 7 jours. Côté API, ce nettoyage a lieu après les requêtes du relais, au plus toutes les 15 minutes : aucune tâche planifiée à créer sur l'hébergement.
 - **Un jeton des deux côtés.** Le relais s'authentifie auprès de l'API avec un jeton configuré dans `relay.env` **et** dans le `config.php` de l'API, envoyé dans un en-tête (jamais dans l'URL : l'API refuse un `?token=…`, qui finirait dans les logs d'accès de l'hébergement).
 - **Rien n'est exposé.** L'interface de Mailpit reste sur `127.0.0.1`, et le relais n'ouvre aucun port sur le serveur.
 
@@ -305,9 +305,9 @@ sudo systemctl restart mailpit mailpit-relay
 
 **Changer le jeton** : générez-en un nouveau (`openssl rand -hex 32`), mettez-le dans le `config.php` de l'API, puis dans `RELAY_API_TOKEN`, et lancez `sudo systemctl restart mailpit-relay`. Entre les deux, le relais reçoit des `401` et réessaie : aucun mail n'est perdu.
 
-Un arrêt du relais ne fait perdre **aucun** mail, même ceux arrivés pendant l'arrêt : au redémarrage, il relaie tous les mails qui n'ont pas encore le tag `relayed`. La seule perte possible est un mail **supprimé de Mailpit** avant d'avoir été relayé (à la main, ou par `MP_MAX_MESSAGES` / `MP_MAX_AGE`). Avec `MP_MAX_MESSAGES=1000`, cela n'arrive que si plus de 1000 mails arrivent pendant une panne de l'API.
+Un arrêt du relais ne fait perdre **aucun** mail, même ceux arrivés pendant l'arrêt : au redémarrage, il relaie tous les mails qui n'ont pas encore le tag `relayed`. La seule perte possible est un mail **supprimé de Mailpit** avant d'avoir été relayé (à la main, ou par `MP_MAX_MESSAGES` / `MP_MAX_AGE`). Avec `MP_MAX_MESSAGES=1000` et `MP_MAX_AGE=7d`, cela n'arrive que si plus de 1000 mails arrivent pendant une panne de l'API, ou si elle dure plus de 7 jours.
 
-**Rétention** : gardez la même valeur dans `MP_MAX_MESSAGES` (`/etc/mailpit/mailpit.env`) et dans `webhook.max_messages` (`config.php` de l'API), 1000 par défaut. Les deux côtés conservent alors les mêmes mails.
+**Rétention** : gardez la même valeur dans `MP_MAX_MESSAGES` (`/etc/mailpit/mailpit.env`) et dans `webhook.max_messages` (`config.php` de l'API), 1000 par défaut, ainsi que dans `MP_MAX_AGE` et `webhook.max_age_days` (`7d` et `7`). Les deux côtés conservent alors les mêmes mails.
 
 ---
 

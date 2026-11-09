@@ -24,7 +24,8 @@ use Psr\Http\Message\ServerRequestInterface;
  * Réponses :
  *   201 {"status":"stored", "complete":true, "missing":[], …}   pièce enregistrée
  *   200 {"status":"already-stored", …}                          déjà reçue (même empreinte)
- *   404 message ou pièce inconnus (le relais renvoie alors le message)
+ *   404 message ou pièce inconnus (le relais renvoie alors le message), y compris quand le mail
+ *       est supprimé pendant l'envoi : le fichier reçu est alors effacé
  *   409 pièce ignorée car trop volumineuse (too_large), ou déjà reçue avec une autre empreinte
  *   413 contenu au-delà de la limite · 415 mauvais Content-Type · 422 empreinte absente ou fausse
  */
@@ -92,6 +93,18 @@ final readonly class UploadPartAction
 
         $path = $this->files->commit($upload['tmp'], FileStore::partPath($id, $partId));
         $state = $this->repository->markPartStored($part['message_pk'], $partId, $upload['size'], $upload['sha256'], $path);
+        if ($state === null) {
+            // Mail supprimé pendant l'envoi (purge, Dashboard, API) : le fichier ne serait rattaché
+            // à aucune ligne, et personne ne l'effacerait.
+            error_log(sprintf(
+                '[parts] %s/%s : mail supprimé pendant l\'envoi de la pièce, %s',
+                $id,
+                $partId,
+                $this->files->deletePart($path) ? 'fichier effacé' : 'fichier pas effacé (le nettoyage le retirera)',
+            ));
+
+            return $this->error(404, 'pièce inconnue : le mail a été supprimé pendant l\'envoi');
+        }
 
         return $this->ok(201, 'stored', $id, $partId, $state);
     }

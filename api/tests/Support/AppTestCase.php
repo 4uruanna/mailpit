@@ -60,6 +60,8 @@ abstract class AppTestCase extends DatabaseTestCase
                 'max_body_size'       => self::MAX_BODY_SIZE,
                 'max_attachment_size' => self::MAX_PART_SIZE,
                 'max_messages'        => 0,
+                // Pas de suppression par âge : les dates des mails de test sont fixes.
+                'max_age_days'        => 0,
                 'storage_dir'         => $this->storageDir,
             ],
             'app' => ['timezone' => 'Europe/Paris'],

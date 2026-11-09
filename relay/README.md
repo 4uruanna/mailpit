@@ -94,7 +94,7 @@ Variables d'environnement (voir `relay.env.example`) :
 
 ## Limites
 
-- Un mail **supprimé de Mailpit** avant d'avoir été relayé (à la main, ou par `MP_MAX_MESSAGES` / `MP_MAX_AGE`) ne peut plus l'être : c'est la seule copie. Avec `MP_MAX_MESSAGES=1000`, cela n'arrive que si plus de 1000 mails arrivent pendant une panne de l'API. Au retour de l'API, le relais commence par les plus anciens, les prochains à être supprimés.
+- Un mail **supprimé de Mailpit** avant d'avoir été relayé (à la main, ou par `MP_MAX_MESSAGES` / `MP_MAX_AGE`) ne peut plus l'être : c'est la seule copie. Avec `MP_MAX_MESSAGES=1000` et `MP_MAX_AGE=7d`, cela n'arrive que si plus de 1000 mails arrivent pendant une panne de l'API, ou si elle dure plus de 7 jours (l'API supprimerait de toute façon ces mails au bout de 7 jours : `webhook.max_age_days`). Au retour de l'API, le relais commence par les plus anciens, les prochains à être supprimés.
 - Un passage lit au plus 20 lots de `RELAY_BATCH_SIZE` mails (1000 avec la valeur par défaut). Au-delà, si tous les mails lus attendent leur nouvel essai, les plus récents attendent le passage où les plus anciens sont réessayés.
 - Retirer le tag `relayed` d'un mail dans l'interface de Mailpit le fait renvoyer. C'est sans risque, car l'API le reconnaît comme un doublon.
 - Le relais garde en mémoire seulement le délai avant le prochain essai de chaque mail en échec. Après un redémarrage, tous les mails en attente sont réessayés tout de suite.

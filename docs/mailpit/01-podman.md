@@ -39,9 +39,10 @@ Contenu (adaptez le domaine et le mot de passe) :
 # Stockage sur disque (sinon les mails disparaissent au redémarrage)
 MP_DATABASE=/data/mailpit.db
 
-# Garde au maximum les 1000 derniers mails, et pas plus de 30 jours
+# Garde au maximum les 1000 derniers mails, et pas plus de 7 jours
+# (comme l'API de la Partie 7 : webhook.max_messages et webhook.max_age_days)
 MP_MAX_MESSAGES=1000
-MP_MAX_AGE=30d
+MP_MAX_AGE=7d
 
 # N'accepte QUE les mails destinés au sous-domaine de test (expression régulière)
 MP_SMTP_ALLOWED_RECIPIENTS=@test\.mondomaine\.fr$

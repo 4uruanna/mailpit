@@ -41,7 +41,8 @@ api/
 ├── composer.json / composer.lock
 ├── phpunit.xml.dist     # configuration des tests automatisés (PHPUnit)
 ├── bin/
-│   └── create-admin.php # prépare la requête SQL qui crée un administrateur
+│   ├── create-admin.php # prépare la requête SQL qui crée un administrateur
+│   └── cleanup.php      # lance le nettoyage à la main (facultatif, voir « Rétention »)
 ├── public/
 │   ├── .htaccess        # HTTPS (redirection, HSTS) et contrôleur frontal Slim
 │   └── index.php
@@ -52,7 +53,8 @@ api/
 ├── templates/           # pages HTML du Dashboard
 ├── tests/               # tests automatisés (voir « Tests automatisés »), inutiles sur l'hébergement
 ├── var/log/             # logs (doit être accessible en écriture)
-├── var/messages/        # pièces jointes et images intégrées, un dossier par mail (accessible en écriture)
+├── var/messages/        # pièces jointes et images intégrées, un dossier par mail (accessible en écriture),
+│                        # et .maintenance : date du dernier nettoyage
 └── vendor/              # généré par composer install, à envoyer en FTP
 ```
 
@@ -65,9 +67,11 @@ Elles exigent le jeton du relais, dans l'en-tête `Authorization: Bearer <jeton>
 | Méthode | URL | Réponse |
 |---|---|---|
 | `POST` | `/v1/messages` | Corps : le mail en JSON (voir ci-dessous).<br>`201 {"status":"created", "id":"…", "complete":false, "missing":["2","1.3"], "too_large":["4"]}` : message enregistré<br>`200 {"status":"updated"\|"duplicate", …}` : déjà reçu (même ID Mailpit), complété si besoin<br>`400` JSON invalide · `413` trop volumineux · `415` pas du JSON · `422` champ invalide |
-| `POST` | `/v1/messages/{id}/part/{partId}` | Corps : le contenu brut de la pièce (`Content-Type: application/octet-stream`), avec l'en-tête `X-Content-SHA256` (empreinte SHA-256 en hexadécimal).<br>`201 {"status":"stored", "complete":true, "missing":[], …}` : pièce enregistrée<br>`200 {"status":"already-stored", …}` : déjà reçue<br>`404` message ou pièce inconnus · `409` pièce `too_large`, ou déjà reçue avec un autre contenu · `413` au-delà de la limite · `415` mauvais Content-Type · `422` empreinte absente ou différente |
+| `POST` | `/v1/messages/{id}/part/{partId}` | Corps : le contenu brut de la pièce (`Content-Type: application/octet-stream`), avec l'en-tête `X-Content-SHA256` (empreinte SHA-256 en hexadécimal).<br>`201 {"status":"stored", "complete":true, "missing":[], …}` : pièce enregistrée<br>`200 {"status":"already-stored", …}` : déjà reçue<br>`404` message ou pièce inconnus (ou mail supprimé pendant l'envoi : la pièce reçue est effacée) · `409` pièce `too_large`, ou déjà reçue avec un autre contenu · `413` au-delà de la limite · `415` mauvais Content-Type · `422` empreinte absente ou différente |
 
 Pour les deux : `403` IP non autorisée (vérifiée en premier) · `401` jeton absent ou faux · `500` erreur serveur (base injoignable…).
+
+Après une requête acceptée du relais, l'API fait son [nettoyage](#rétention--7-jours-et-1000-mails-au-plus) si le dernier date de plus de 15 minutes. La réponse n'en dépend pas : une erreur de nettoyage est seulement écrite dans le log.
 
 Pour toutes les routes (relais, développeurs, Dashboard) : en `http://`, `301` vers la même URL en `https://` pour `GET` et `HEAD`, `403 {"error":"HTTPS obligatoire : renvoyez la requête en https://"}` pour les autres méthodes, avant toute autre vérification. Voir [HTTPS obligatoire](#https-obligatoire).
 
@@ -150,6 +154,7 @@ cp config.example.php config.php
 | `webhook.token` | **obligatoire** : le secret partagé avec le relais, généré avec `openssl rand -hex 32` (32 caractères minimum). La même valeur va dans `RELAY_API_TOKEN` côté relais |
 | `webhook.max_attachment_size` | taille maximale d'une pièce jointe, 5 Mo par défaut |
 | `webhook.max_messages` | nombre de mails gardés, 1000 par défaut (comme `MP_MAX_MESSAGES` côté Mailpit). `0` = sans limite |
+| `webhook.max_age_days` | les mails sont supprimés (base **et** pièces jointes) ce nombre de jours après leur réception par Mailpit, 7 par défaut (comme `MP_MAX_AGE=7d` côté Mailpit). `0` = jamais. Voir [Rétention](#rétention--7-jours-et-1000-mails-au-plus) |
 | `app.session_lifetime` | Dashboard : déconnexion après ce nombre de secondes d'inactivité (2 h par défaut) |
 | `app.timezone` | Dashboard : fuseau horaire d'affichage des dates (`Europe/Paris` par défaut) |
 | `force_https` | `true` (défaut) : HTTPS obligatoire. `false` **uniquement** pour un essai en local sans HTTPS. Voir [HTTPS obligatoire](#https-obligatoire) |
@@ -187,6 +192,8 @@ Espace client OVH → **Bases de données** → **…** → **Aller sur phpMyAdm
 > |---------|----------------------|---------------|
 > | `2026-11-dashboard-tokens.sql` | avant l'arrivée du Dashboard | Crée les nouvelles tables et y range les destinataires des mails déjà enregistrés |
 > | `2026-11-login-throttle-ip.sql` | avant la limitation des connexions par adresse | Ajoute la colonne `ip_key` et ses index à `mailpit_login_attempts` |
+>
+> ⚠️ La suppression des mails au bout de 7 jours ne demande aucune migration, mais elle s'applique **dès la mise à jour** : sans clé `max_age_days` dans votre `config.php`, les mails reçus il y a plus de 7 jours sont supprimés (base et pièces jointes) après la première requête du relais. Pour les garder, ajoutez `'max_age_days' => 0` (ou une autre durée) dans la section `webhook` **avant** d'envoyer les nouveaux fichiers. Voir [Rétention](#rétention--7-jours-et-1000-mails-au-plus).
 
 ### 2 bis. Créer un administrateur du Dashboard
 
@@ -206,9 +213,9 @@ Créez par exemple un dossier `api` à la racine FTP de l'hébergement (à côt�
 
 > 💡 Les fichiers qui commencent par un point sont souvent masqués dans les clients FTP. Dans FileZilla : menu **Serveur** → **Forcer l'affichage des fichiers cachés**.
 
-Envoyez aussi `templates/` (pages et script du Dashboard). Inutile d'envoyer `README.md`, `bin/`, `sql/`, `tests/`, `phpunit.xml.dist` et `config.example.php` (ils sont de toute façon bloqués par le `.htaccess`).
+Envoyez aussi `templates/` (pages et script du Dashboard). Inutile d'envoyer `README.md`, `bin/`, `sql/`, `tests/`, `phpunit.xml.dist` et `config.example.php` (ils sont de toute façon bloqués par le `.htaccess`). Seule exception, facultative : `bin/cleanup.php`, si vous voulez lancer le nettoyage depuis une tâche planifiée (voir [Rétention](#rétention--7-jours-et-1000-mails-au-plus)).
 
-Les dossiers `var/log/` et `var/messages/` doivent être accessibles en écriture par PHP (droits `755` ou `705`, ce qui est le cas par défaut chez OVH). `var/messages/` contiendra toutes les pièces jointes : surveillez l'espace disque de l'hébergement.
+Les dossiers `var/log/` et `var/messages/` doivent être accessibles en écriture par PHP (droits `755` ou `705`, ce qui est le cas par défaut chez OVH). `var/messages/` contiendra toutes les pièces jointes des 7 derniers jours (1000 mails au plus) : surveillez l'espace disque de l'hébergement.
 
 ### 4. Brancher le domaine `api.amnesic.dev`
 
@@ -238,10 +245,10 @@ Installez le relais sur le serveur Mailpit : suivez la [Partie 7 du tuto](../doc
 curl -4 -i -X POST 'https://api.amnesic.dev/v1/messages' \
   -H 'Authorization: Bearer LE_JETON_DE_CONFIG_PHP' \
   -H 'Content-Type: application/json' \
-  -d '{"ID":"test-manuel-1","Created":"2026-01-01T12:00:00Z","Subject":"Test manuel","From":{"Name":"","Address":"moi@exemple.fr"},"To":[],"Parts":[{"PartID":"2","Kind":"attachment","FileName":"test.txt","ContentType":"text/plain","ContentID":"","Size":5}]}'
+  -d '{"ID":"test-manuel-1","Created":"'"$(date -u +%FT%TZ)"'","Subject":"Test manuel","From":{"Name":"","Address":"moi@exemple.fr"},"To":[],"Parts":[{"PartID":"2","Kind":"attachment","FileName":"test.txt","ContentType":"text/plain","ContentID":"","Size":5}]}'
 ```
 
-Réponse attendue : `HTTP/2 201` puis `{"id":"test-manuel-1","status":"created","complete":false,"missing":["2"],"too_large":[]}`. Envoyez ensuite la pièce annoncée :
+Réponse attendue : `HTTP/2 201` puis `{"id":"test-manuel-1","status":"created","complete":false,"missing":["2"],"too_large":[]}`. La date de réception (`Created`) est l'heure actuelle (`date -u`) : un mail reçu par Mailpit il y a plus de 7 jours serait supprimé par le [nettoyage](#rétention--7-jours-et-1000-mails-au-plus) dès cette requête. Envoyez ensuite la pièce annoncée :
 
 ```bash
 printf 'hello' > /tmp/test.txt
@@ -308,8 +315,8 @@ Les tests **PHPUnit** vérifient le code sur votre ordinateur, sans rien déploy
 | Suite | Dossier | Ce qui est testé | Base MySQL |
 |---|---|---|---|
 | `unit` | `tests/Unit/` | classes sans base : filtre IP (`IpMatcher`, `ClientIpResolver`), adresses, validation du JSON des mails et des pièces (chaque erreur `422`), configuration (`Settings`), HTTPS (`HttpsDetector` : `HTTPS`, port 443, `X-Forwarded-Proto` d'un proxy de confiance ; `ForceHttpsMiddleware` : `301`, `403`, HSTS), filtres du Dashboard, jetons (`ApiScope`, `Authorization: Bearer`, jeton du relais refusé dans l'URL et avertissement sans sa valeur), adresse comptée par la limite de connexion (`LoginThrottle::ipKey`) | non |
-| `integration` | `tests/Integration/` | accès à la base : mails, pièces, purge, liste par adresse (sans corps), mail complet limité aux adresses d'un jeton, suppression, jetons développeurs, limite de connexion au Dashboard (par identifiant et adresse, plafond par adresse, IPv6 par `/64`) | oui |
-| `http` | `tests/Http/` | l'application complète (`Kernel::create`) avec de fausses requêtes : routes du relais (`403`, `401`, `401` avec `?token=…`, `415`, `400`, `413`, `422`, `201`, `200`), envoi des pièces jusqu'à `"complete": true`, routes des développeurs (liste sans corps, mail complet par son ID, `404` hors des adresses du jeton, jeton du relais selon l'IP), Dashboard (redirection vers la connexion, refus sans jeton anti-CSRF, messages de blocage, cookie de session `Secure`, exemple `curl` de la page du jeton en `https://` derrière le frontal OVH), requêtes en clair (`301`, `403` sans rien enregistrer, proxy de confiance, `force_https` désactivé) | oui |
+| `integration` | `tests/Integration/` | accès à la base : mails, pièces, purge, suppression par âge (`created_at`), pièce d'un mail supprimé, nettoyage (`Maintenance` : mails trop anciens ou en trop, fichiers temporaires vieux ou récents, dossiers et fichiers sans ligne en base, au plus toutes les 15 minutes, verrou, erreur seulement écrite dans le log), liste par adresse (sans corps), mail complet limité aux adresses d'un jeton, suppression, jetons développeurs, limite de connexion au Dashboard (par identifiant et adresse, plafond par adresse, IPv6 par `/64`) | oui |
+| `http` | `tests/Http/` | l'application complète (`Kernel::create`) avec de fausses requêtes : routes du relais (`403`, `401`, `401` avec `?token=…`, `415`, `400`, `413`, `422`, `201`, `200`), envoi des pièces jusqu'à `"complete": true`, routes des développeurs (liste sans corps, mail complet par son ID, `404` hors des adresses du jeton, jeton du relais selon l'IP), Dashboard (redirection vers la connexion, refus sans jeton anti-CSRF, messages de blocage, cookie de session `Secure`, exemple `curl` de la page du jeton en `https://` derrière le frontal OVH), requêtes en clair (`301`, `403` sans rien enregistrer, proxy de confiance, `force_https` désactivé), nettoyage après les requêtes acceptées du relais (et pas après les autres), pièce d'un mail supprimé pendant l'envoi (`404`, fichier effacé) | oui |
 
 **Prérequis** : PHP 8.4 minimum avec `pdo_mysql` et `mbstring`, Composer, et une base MySQL **de test** (8.4 comme l'hébergement ; 8.0.19 minimum).
 
@@ -375,7 +382,9 @@ Les pièces jointes des tests sont écrites dans un dossier temporaire, supprim�
 | `413` sur `POST /v1/messages/…/part/…` | La pièce dépasse la limite, alors que sa taille annoncée était plus petite : cas anormal, voir les logs du relais |
 | Log PHP `POST Content-Length of … exceeds the limit` | Un mail au texte ou HTML très lourd, ou une pièce jointe, dépasse `post_max_size` de l'hébergement. Le JSON est quand même lu et enregistré : l'avertissement est sans effet tant que `display_errors` est désactivé (`environment=production` dans `.ovhconfig`) |
 | Pièce jointe en `too_large` | Elle dépasse `webhook.max_attachment_size` (5 Mo par défaut). Seule sa description est enregistrée |
-| Des mails anciens ont disparu | Normal : seuls les `webhook.max_messages` derniers (1000 par défaut) sont gardés. Les échecs de purge sont écrits dans `var/log/api.log` (`[prune] …`) |
+| Des mails anciens ont disparu | Normal : les mails sont supprimés 7 jours après leur réception par Mailpit (`webhook.max_age_days`), et seuls les `webhook.max_messages` derniers (1000 par défaut) sont gardés. Chaque nettoyage est résumé dans `var/log/api.log` (`[maintenance] …`), les échecs de purge aussi (`[prune] …`) |
+| Des mails de plus de 7 jours sont encore là | Le nettoyage n'a lieu qu'après une requête du relais : relais arrêté, ou aucun mail reçu depuis. Lancez-le à la main (`php bin/cleanup.php`), ou planifiez-le ([Rétention](#rétention--7-jours-et-1000-mails-au-plus)) |
+| `[maintenance] nettoyage impossible : …` dans le log | Base injoignable, ou `var/messages/` (`webhook.storage_dir`) pas accessible en écriture. Les mails du relais sont quand même enregistrés ; le nettoyage est retenté 15 minutes plus tard |
 | `text_body` vide | Mail reçu par l'ancien webhook direct de Mailpit (résumé seulement), avant le passage au relais, ou `sql/schema.sql` n'a pas été importé (erreur `Table … doesn't exist` dans le log) |
 | Mail avec `completed_at` vide | Des pièces sont encore attendues (`status = 'pending'` dans `mailpit_parts`). Le relais les renvoie tout seul : voir ses logs |
 | Page blanche / erreur PHP | Version de PHP trop ancienne : vérifiez `.ovhconfig` (8.4 minimum) |
@@ -586,13 +595,43 @@ La suppression efface le mail de la base et ses pièces jointes de `var/messages
 - le mail reste dans **Mailpit** : seule la copie de l'API est supprimée ;
 - `DELETE /v1/addresses` ne retire pas l'adresse du jeton : seul le Dashboard le fait.
 
-## Rétention : les 1000 derniers mails
+## Rétention : 7 jours et 1000 mails au plus
 
-À chaque **nouveau** mail, l'API supprime les plus anciens pour n'en garder que `webhook.max_messages` (1000 par défaut) : leur ligne dans `mailpit_messages`, leurs pièces dans `mailpit_parts`, et leur dossier `var/messages/<mailpit_id>/`. « Les plus anciens » s'entend dans l'ordre d'arrivée dans l'API. Une grosse purge (par exemple après avoir baissé la limite) se fait par paquets de 200 mails, au fil des mails suivants.
+L'API supprime les mails toute seule, base **et** fichiers (leur ligne dans `mailpit_messages`, leurs pièces dans `mailpit_parts`, leur dossier `var/messages/<mailpit_id>/`) :
 
-Gardez la même valeur que `MP_MAX_MESSAGES` côté Mailpit ([Partie 1, étape 3](../docs/mailpit/01-podman.md#étape-3--créer-le-fichier-de-configuration-de-mailpit)) : Mailpit et l'API conservent alors les mêmes mails.
+| Règle | Réglage | Quand |
+|---|---|---|
+| Mails reçus par Mailpit il y a plus de 7 jours (colonne `created_at`) | `webhook.max_age_days` (`7`, `0` = jamais) | au nettoyage |
+| Au-delà des 1000 mails les plus récents (ordre d'arrivée dans l'API) | `webhook.max_messages` (`1000`, `0` = sans limite) | à chaque **nouveau** mail, et au nettoyage |
 
-Pour supprimer un mail à la main, supprimez sa ligne dans `mailpit_messages` (ses lignes de `mailpit_parts` et `mailpit_message_recipients` partent avec elle) et son dossier `var/messages/<mailpit_id>/` par FTP. Plus simple : un jeton développeur associé à son adresse peut le supprimer, base et fichiers (`DELETE /v1/messages/{id}`).
+**Nettoyage automatique, sans tâche planifiée** : après une requête acceptée du relais (un mail ou une pièce jointe), l'API nettoie si le dernier nettoyage date de plus de **15 minutes**. Sa date est dans `var/messages/.maintenance`, verrouillé pendant le nettoyage : deux requêtes simultanées ne nettoient pas en même temps. Une erreur de nettoyage ne fait jamais échouer la requête du relais : elle est écrite dans `var/log/api.log` (`[maintenance] …`), et le nettoyage est retenté 15 minutes plus tard. Chaque nettoyage qui supprime quelque chose y écrit un résumé.
+
+Les suppressions se font par paquets de 200 mails, 1000 au plus par nettoyage automatique. Une grosse purge (après avoir baissé une limite, ou à la mise à jour) continue dès la requête suivante du relais.
+
+Le nettoyage retire aussi ce que personne n'efface, une fois **sans modification depuis 1 heure** (jamais un envoi en cours) :
+
+- les fichiers temporaires `var/messages/.upload-…` d'une pièce jointe dont l'envoi a été interrompu (PHP arrêté, délai dépassé) ;
+- les dossiers `var/messages/<ID>/` d'un mail qui n'est plus en base (effacement raté après une suppression) ;
+- les fichiers d'un dossier qu'aucune pièce de `mailpit_parts` ne référence.
+
+Un mail supprimé (purge, Dashboard, `DELETE`) **pendant** l'envoi d'une de ses pièces ne laisse pas de fichier : l'API efface la pièce reçue et répond `404`.
+
+Gardez les mêmes valeurs côté Mailpit ([Partie 1, étape 3](../docs/mailpit/01-podman.md#étape-3--créer-le-fichier-de-configuration-de-mailpit)) : `MP_MAX_MESSAGES=1000` et `MP_MAX_AGE=7d`. Mailpit et l'API conservent alors les mêmes mails.
+
+> 💡 Le relais déclenche le nettoyage : s'il est arrêté, rien n'est supprimé. Pour nettoyer quand même, lancez **`php bin/cleanup.php`** dans le dossier `api/` de l'hébergement (SSH, s'il est inclus dans votre offre). Il fait tout le nettoyage tout de suite, jusqu'au bout, et affiche un résumé :
+>
+> ```
+> Nettoyage terminé :
+>   Mails de plus de 7 jours supprimés  : 12
+>   Mails au-delà des 1000 plus récents : 0
+>   Fichiers temporaires effacés        : 1
+>   Dossiers sans mail en base effacés  : 0
+>   Fichiers sans pièce en base effacés : 0
+> ```
+>
+> Pour l'automatiser (facultatif) : envoyez `bin/cleanup.php` en FTP, puis Espace client OVH → **Hébergements** → onglet **Tâches planifiées - Cron** (parfois sous **Plus**) → **Ajouter une planification** : commande `api/bin/cleanup.php` (chemin depuis la racine FTP), langage PHP 8.4 ou plus, une fois par jour. Le script refuse d'être appelé depuis le web (`404`, et `bin/` est bloqué par le `.htaccess`).
+
+Pour supprimer un mail à la main, supprimez sa ligne dans `mailpit_messages` (ses lignes de `mailpit_parts` et `mailpit_message_recipients` partent avec elle) : son dossier `var/messages/<mailpit_id>/` est effacé par un nettoyage suivant, une fois resté 1 heure sans modification. Plus simple : un jeton développeur associé à son adresse peut le supprimer, base et fichiers (`DELETE /v1/messages/{id}`).
 
 ## HTTPS obligatoire
 

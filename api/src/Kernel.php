@@ -15,6 +15,7 @@ use App\Action\Dashboard\SignInController;
 use App\Action\Dashboard\TokensController;
 use App\Action\UploadPartAction;
 use App\Auth\LoginThrottle;
+use App\Dashboard\ErrorPage;
 use App\Dashboard\Session;
 use App\Dashboard\View;
 use App\Http\ClientIpResolver;
@@ -116,7 +117,7 @@ final class Kernel
         //   DELETE /v1/messages/{id}                jeton : supprime un mail de ses adresses
         //   GET    /v1/addresses                    jeton : ses adresses
         //   DELETE /v1/addresses?address=…          jeton : supprime les mails d'une de ses adresses
-        //   /v1/app/…                               Dashboard (session)
+        //   /v1/app/…                               Dashboard (session) ; erreurs en page HTML
         $app->group('/v1', function (RouteCollectorProxy $v1) use (
             $create, $upload, $ipFilter, $relayAuth, $maintenance,
             $list, $show, $deleteMessage, $listAddresses, $deleteAddress, $tokenAuth, $listAuth,
@@ -160,8 +161,10 @@ final class Kernel
             })->add(new DashboardMiddleware($session, $view, $https));
         });
 
-        // Attrape toutes les erreurs des routes et des middlewares ajoutés avant lui.
-        $errorHandler = new ErrorHandler($app->getCallableResolver(), $responseFactory);
+        // Attrape toutes les erreurs des routes et des middlewares ajoutés avant lui. Réponses JSON,
+        // sauf sous /v1/app : page HTML d'erreur du Dashboard, avec ses en-têtes de sécurité.
+        $errorPage = new ErrorPage($view, $session, $https, $responseFactory, $settings->basePath);
+        $errorHandler = new ErrorHandler($app->getCallableResolver(), $responseFactory, $errorPage);
         $errorHandler->forceContentType('application/json');
         $errorMiddleware = $app->addErrorMiddleware($settings->debug, true, true);
         $errorMiddleware->setDefaultErrorHandler($errorHandler);

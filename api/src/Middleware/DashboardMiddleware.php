@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Middleware;
 
+use App\Dashboard\SecurityHeaders;
 use App\Dashboard\Session;
 use App\Dashboard\View;
 use App\Http\HttpsDetector;
@@ -17,8 +18,8 @@ use Psr\Http\Server\RequestHandlerInterface;
  *  - démarre la session (cookie Secure si la page est en HTTPS, même détection que
  *    ForceHttpsMiddleware : derrière un proxy de confiance, X-Forwarded-Proto) ;
  *  - refuse tout formulaire POST sans le bon jeton anti-CSRF (champ « _csrf ») ;
- *  - ajoute les en-têtes de sécurité (pas de cache, pas d'iframe, seul le script dashboard.js),
- *    sauf ceux que la page a déjà fixés.
+ *  - ajoute les en-têtes de sécurité (SecurityHeaders : pas de cache, pas d'iframe, seul le script
+ *    dashboard.js), sauf ceux que la page a déjà fixés.
  */
 final readonly class DashboardMiddleware implements MiddlewareInterface
 {
@@ -45,19 +46,7 @@ final readonly class DashboardMiddleware implements MiddlewareInterface
         $response ??= $handler->handle($request);
 
         // Une page peut fixer ses propres règles (ex. le corps HTML d'un mail, affiché dans une iframe).
-        $headers = [
-            'Cache-Control'           => 'no-store',
-            'Content-Security-Policy' => "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:; frame-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
-            'X-Frame-Options'         => 'DENY',
-            'X-Content-Type-Options'  => 'nosniff',
-            'Referrer-Policy'         => 'same-origin',
-        ];
-        foreach ($headers as $name => $value) {
-            if (!$response->hasHeader($name)) {
-                $response = $response->withHeader($name, $value);
-            }
-        }
-
-        return $response;
+        // Les pages d'erreur reçoivent les mêmes en-têtes (App\Dashboard\ErrorPage).
+        return SecurityHeaders::apply($response);
     }
 }

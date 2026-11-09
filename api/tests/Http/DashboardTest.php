@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace App\Tests\Http;
 
+use App\Dashboard\SecurityHeaders;
+use App\Dashboard\Session;
 use App\Tests\Support\AppTestCase;
+use App\Tests\Support\TempDir;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 use Psr\Http\Message\ResponseInterface;
 use Slim\Psr7\Factory\ServerRequestFactory;
@@ -205,6 +208,166 @@ final class DashboardTest extends AppTestCase
         self::assertStringContainsString('https://api.test/v1/messages?address=', $body);
         self::assertStringContainsString('https://api.test/v1/messages/ID_DU_MAIL', $body);
         self::assertStringNotContainsString('http://api.test', $body);
+    }
+
+    /** Taille actuelle du log des tests : ce qui est écrit ensuite se lit avec logSince(). */
+    private static function logSize(): int
+    {
+        clearstatcache();
+
+        return is_file(TempDir::logFile()) ? (int) filesize(TempDir::logFile()) : 0;
+    }
+
+    private static function logSince(int $offset): string
+    {
+        clearstatcache();
+
+        return is_file(TempDir::logFile()) ? (string) file_get_contents(TempDir::logFile(), offset: $offset) : '';
+    }
+
+    /** Page HTML d'erreur du Dashboard : bon code, HTML, mêmes en-têtes de sécurité que les autres pages. */
+    private static function assertErrorPage(int $status, ResponseInterface $response, string $path): string
+    {
+        self::assertSame($status, $response->getStatusCode(), $path);
+        self::assertSame('text/html; charset=utf-8', $response->getHeaderLine('Content-Type'), $path);
+        foreach (SecurityHeaders::HEADERS as $name => $value) {
+            self::assertSame($value, $response->getHeaderLine($name), $path . ' : ' . $name);
+        }
+
+        $body = (string) $response->getBody();
+        self::assertStringStartsWith('<!doctype html>', ltrim($body), $path);
+        self::assertStringContainsString('<a class="button" href="/v1/app/messages">Retour aux mails</a>', $body, $path);
+        self::assertStringNotContainsString('{"message"', $body, $path);
+
+        return $body;
+    }
+
+    public function testUnknownMessageShowsAnHtmlErrorPage(): void
+    {
+        $this->signIn();
+        $offset = self::logSize();
+
+        foreach (['/v1/app/messages/inconnu' => 'Mail inconnu.', '/v1/app/tokens/999' => 'Jeton inconnu.'] as $path => $message) {
+            $body = self::assertErrorPage(404, $this->request('GET', $path, ip: self::OTHER_IP), $path);
+
+            self::assertStringContainsString('<title>Page introuvable · Mailpit Dashboard</title>', $body, $path);
+            self::assertStringContainsString('<p>' . $message . '</p>', $body, $path);
+            // Administrateur connecté : le menu est là.
+            self::assertStringContainsString('Déconnexion', $body, $path);
+        }
+
+        // Une 404 n'est pas une erreur du serveur : rien dans le log.
+        self::assertSame('', self::logSince($offset));
+    }
+
+    public function testUnknownDashboardUrlWithoutSession(): void
+    {
+        $offset = self::logSize();
+
+        foreach (['/v1/app/inconnue', '/v1/app/messages/m1/autre', '/v1/app/'] as $path) {
+            $body = self::assertErrorPage(404, $this->request('GET', $path, ip: self::OTHER_IP), $path);
+
+            self::assertStringContainsString('<h1>Page introuvable</h1>', $body, $path);
+            self::assertStringContainsString('Cette page n&#039;existe pas', $body, $path);
+            // Personne n'est connecté : ni menu, ni formulaire.
+            self::assertStringNotContainsString('Déconnexion', $body, $path);
+            self::assertStringNotContainsString('_csrf', $body, $path);
+        }
+
+        // Aucune session créée pour une URL inconnue sans cookie (robots, scans), et rien dans le log.
+        self::assertNotSame(PHP_SESSION_ACTIVE, session_status());
+        self::assertSame('', self::logSince($offset));
+    }
+
+    public function testUnknownDashboardUrlShowsTheMenuWhenTheSessionCookieIsSent(): void
+    {
+        $this->signIn();
+        // Une nouvelle requête du navigateur : session fermée, seul le cookie la désigne.
+        $id = (string) session_id();
+        session_write_close();
+        session_id($id);
+
+        $request = new ServerRequestFactory()->createServerRequest('GET', 'https://api.test/v1/app/inconnue', [
+            'REMOTE_ADDR' => self::OTHER_IP,
+            'HTTPS'       => 'on',
+            'SERVER_PORT' => '443',
+        ])->withCookieParams([Session::COOKIE => $id]);
+        $body = self::assertErrorPage(404, $this->handle($request), '/v1/app/inconnue');
+
+        self::assertSame(PHP_SESSION_ACTIVE, session_status());
+        self::assertStringContainsString('Déconnexion', $body);
+        self::assertStringContainsString('<span>admin</span>', $body);
+    }
+
+    public function testWrongMethodShowsAnHtmlErrorPage(): void
+    {
+        $offset = self::logSize();
+
+        $response = $this->request('DELETE', '/v1/app/messages', ip: self::OTHER_IP);
+
+        $body = self::assertErrorPage(405, $response, 'DELETE /v1/app/messages');
+        self::assertSame('GET', $response->getHeaderLine('Allow'));
+        self::assertStringContainsString('<h1>Méthode non autorisée</h1>', $body);
+        self::assertStringContainsString('Cette page n&#039;accepte pas la méthode DELETE (seulement GET).', $body);
+
+        // OPTIONS : Slim répondrait 200 (pré-vérification CORS) ; la page garde le vrai code.
+        $response = $this->request('OPTIONS', '/v1/app/messages', ip: self::OTHER_IP);
+        $body = self::assertErrorPage(405, $response, 'OPTIONS /v1/app/messages');
+        self::assertSame('GET', $response->getHeaderLine('Allow'));
+        self::assertStringContainsString('<p class="muted">Erreur 405</p>', $body);
+        $body = self::assertErrorPage(404, $this->request('OPTIONS', '/v1/app/inconnue', ip: self::OTHER_IP), 'OPTIONS /v1/app/inconnue');
+        self::assertStringContainsString('<h1>Page introuvable</h1>', $body);
+
+        self::assertSame('', self::logSince($offset));
+    }
+
+    /**
+     * Configuration avec une base injoignable (aucun serveur MySQL sur le port 1).
+     *
+     * @return array<string, mixed>
+     */
+    private function configWithoutDatabase(bool $debug = false): array
+    {
+        $config = $this->config();
+        $config['db']['port'] = 1;
+        $config['debug'] = $debug;
+
+        return $config;
+    }
+
+    public function testDatabaseErrorShowsAnInternalErrorPageWithoutDetails(): void
+    {
+        $this->signIn();
+        $this->useConfig($this->configWithoutDatabase());
+        $offset = self::logSize();
+
+        $body = self::assertErrorPage(500, $this->request('GET', '/v1/app/messages', ip: self::OTHER_IP), '/v1/app/messages');
+
+        self::assertStringContainsString('<h1>Erreur interne</h1>', $body);
+        self::assertStringContainsString('var/log/api.log', $body);
+        self::assertStringNotContainsString('PDOException', $body);
+        self::assertStringNotContainsString('SQLSTATE', $body);
+        self::assertStringNotContainsString("Détail de l'erreur", $body);
+        // L'erreur, elle, est dans le log ; la page s'est affichée sans seconde erreur.
+        $log = self::logSince($offset);
+        self::assertStringContainsString('PDOException', $log);
+        self::assertStringNotContainsString('[dashboard]', $log);
+    }
+
+    public function testDatabaseErrorWithoutSessionAndInDebug(): void
+    {
+        // Connexion avec une base injoignable : 500 avant toute connexion, et détail en mode debug.
+        $this->useConfig($this->configWithoutDatabase(debug: true));
+        $csrf = self::csrf($this->request('GET', '/v1/app/signin', ip: self::OTHER_IP));
+
+        $response = $this->request('POST', '/v1/app/signin', ip: self::OTHER_IP, form: ['_csrf' => $csrf, 'username' => 'admin', 'password' => 'x']);
+
+        $body = self::assertErrorPage(500, $response, 'POST /v1/app/signin');
+        self::assertStringContainsString('<h1>Erreur interne</h1>', $body);
+        self::assertStringContainsString("Détail de l'erreur (debug)", $body);
+        self::assertStringContainsString('PDOException', $body);
+        self::assertStringContainsString('SQLSTATE', $body);
+        self::assertStringNotContainsString('Déconnexion', $body);
     }
 
     public function testDeletedAdminIsSignedOut(): void

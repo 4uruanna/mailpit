@@ -20,7 +20,7 @@ use RuntimeException;
  *   $date($dateTime)   date lisible, dans le fuseau du Dashboard (objet date ou texte ISO 8601)
  *   $bytes($taille)    taille lisible (« 12,4 Ko »)
  *   $csrf              jeton anti-CSRF, à mettre dans chaque formulaire POST (champ « _csrf »)
- *   $admin             identifiant de l'administrateur connecté, ou null
+ *   $admin             identifiant de l'administrateur connecté, ou null (aussi sans session démarrée)
  *   $flash             message à afficher : ['type' => 'success'|'error', 'message' => '…'] ou null
  */
 final readonly class View
@@ -42,14 +42,18 @@ final readonly class View
     /** @param array<string, mixed> $vars */
     public function render(string $template, array $vars = [], int $status = 200, ?string $title = null): ResponseInterface
     {
+        // Sans session démarrée (page d'erreur d'une URL inconnue, par ex.) : ni menu, ni formulaire,
+        // ni message flash, et rien n'est écrit dans $_SESSION.
+        $session = $this->session->isActive();
         $helpers = [
             'e'     => static fn (mixed $value): string => htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'),
             'url'   => $this->url(...),
             'date'  => $this->date(...),
             'bytes' => self::bytes(...),
-            'csrf'  => $this->session->csrfToken(),
-            'admin' => $this->session->username(),
-            'flash' => $vars['flash'] ?? $this->session->takeFlash('message'),
+            'csrf'  => $session ? $this->session->csrfToken() : '',
+            'admin' => $session ? $this->session->username() : null,
+            // 'flash' => null dans $vars : aucun message, et celui en attente reste pour la page suivante.
+            'flash' => array_key_exists('flash', $vars) ? $vars['flash'] : ($session ? $this->session->takeFlash('message') : null),
         ];
 
         $content = $this->include($template, $vars + $helpers);

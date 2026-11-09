@@ -9,7 +9,8 @@
  */
 
 return [
-    // true uniquement pour déboguer : affiche le détail des erreurs dans les réponses.
+    // true uniquement pour déboguer : affiche le détail des erreurs dans les réponses
+    // (JSON de l'API et pages d'erreur du Dashboard).
     'debug' => false,
 
     // Préfixe des URL si l'API n'est pas à la racine du domaine (ex. '/api').

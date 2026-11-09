@@ -326,12 +326,12 @@ Tapez les commandes dans un **second terminal**, après y avoir refait l'étape 
 export TO=essai@test.mondomaine.fr
 ```
 
-Les commandes des phases 4 et 5 utilisent `$TO`. Si l'adresse n'est pas acceptée par Mailpit, `swaks` se termine par une erreur `550` et aucun mail n'arrive : vérifiez `$TO` en premier (`echo $TO`).
+Les commandes des phases 4 et 5 utilisent `$TO`. Refaites cet `export` dans chaque nouveau terminal. Si `TO` est vide, les commandes s'arrêtent avec le message `TO est vide`. Sans cette protection, `swaks` demanderait le destinataire (`To:`) et attendrait indéfiniment une saisie. Si l'adresse n'est pas acceptée par Mailpit, `swaks` se termine par une erreur `550` et aucun mail n'arrive : vérifiez `$TO` en premier (`echo $TO`).
 
 ### Étape 4.1 — 🖥️ Serveur : un mail simple
 
 ```bash
-swaks --server 127.0.0.1 --port 25 --to "$TO" --header "Subject: Phase 4.1"
+swaks --server 127.0.0.1 --port 25 --to "${TO:?TO est vide : export TO=essai@votre-sous-domaine}" --header "Subject: Phase 4.1"
 ```
 
 ✅ Attendu dans le premier terminal, en une ou deux secondes :
@@ -398,7 +398,7 @@ curl -4 -s -H "Authorization: Bearer $JETON" "$API/v1/messages?limit=1" | python
 
 ```bash
 head -c 6000000 /dev/urandom > /tmp/gros.bin
-swaks --server 127.0.0.1 --port 25 --to "$TO" --header "Subject: Phase 4.3" --attach @/tmp/gros.bin
+swaks --server 127.0.0.1 --port 25 --to "${TO:?TO est vide : export TO=essai@votre-sous-domaine}" --header "Subject: Phase 4.3" --attach @/tmp/gros.bin
 rm /tmp/gros.bin
 ```
 
@@ -416,7 +416,7 @@ Ce test vérifie qu'aucun mail n'est ignoré quand ils arrivent dans la même se
 ```bash
 AVANT=$(curl -4 -s -H "Authorization: Bearer $JETON" "$API/v1/messages?limit=1" | grep -o '"total":[0-9]*')
 for i in $(seq 1 10); do
-  swaks --server 127.0.0.1 --port 25 --to "$TO" --header "Subject: Rafale $i" >/dev/null
+  swaks --server 127.0.0.1 --port 25 --to "${TO:?TO est vide : export TO=essai@votre-sous-domaine}" --header "Subject: Rafale $i" >/dev/null
 done
 ```
 
@@ -446,7 +446,7 @@ Le relais est fait pour ne perdre **aucun** mail. Ces tests le vérifient en pro
 
 ```bash
 sudo systemctl stop mailpit-relay
-for i in 1 2 3; do swaks --server 127.0.0.1 --port 25 --to "$TO" --header "Subject: Pendant l'arret $i" >/dev/null; done
+for i in 1 2 3; do swaks --server 127.0.0.1 --port 25 --to "${TO:?TO est vide : export TO=essai@votre-sous-domaine}" --header "Subject: Pendant l'arret $i" >/dev/null; done
 sudo journalctl -u mailpit -n 5 --no-pager | grep -i webhook
 sudo systemctl start mailpit-relay
 ```
@@ -463,7 +463,7 @@ On simule un jeton désynchronisé, par exemple après avoir changé `config.php
 1. Dans `/etc/mailpit/relay.env`, modifiez **un seul caractère** de `RELAY_API_TOKEN`, puis :
    ```bash
    sudo systemctl restart mailpit-relay
-   swaks --server 127.0.0.1 --port 25 --to "$TO" --header "Subject: Phase 5.2"
+   swaks --server 127.0.0.1 --port 25 --to "${TO:?TO est vide : export TO=essai@votre-sous-domaine}" --header "Subject: Phase 5.2"
    ```
 2. ✅ Attendu dans les logs :
    ```
@@ -498,7 +498,7 @@ Après le redémarrage :
 
 ```bash
 sudo systemctl status mailpit mailpit-relay --no-pager | grep -E '●|Active'
-swaks --server 127.0.0.1 --port 25 --to "$TO" --header "Subject: Apres reboot"
+swaks --server 127.0.0.1 --port 25 --to "${TO:?TO est vide : export TO=essai@votre-sous-domaine}" --header "Subject: Apres reboot"
 sudo journalctl -u mailpit-relay -n 5 --no-pager
 ```
 
@@ -543,6 +543,8 @@ Notez ici chaque écart constaté et sa correction, au fil des essais.
 | 2026-11-09 | 4.3 | Mail de 8,2 Mo (pièce de 6 Mo) : livré, `complete: true`, pièce `too_large` (6000000 octets), avertissement dans les logs du relais | — |
 | 2026-11-09 | 4.4 | Rafale de 10 mails : 10 acceptés, 10 enregistrés par l'API, `total` +10, `status.php` : 0 en attente, 0 refusé | — |
 | 2026-11-09 | 4.5 | Vrai mail depuis Internet avec une photo (130 Ko) : `complete: true`, pièce `stored`, aucun `UFW BLOCK`. La règle SMTP du réseau `mailpit` (`10.89.25.0/24`) fonctionne | Ancienne règle `10.88.0.0/16 1025/tcp` devenue inutile : à supprimer |
+| 2026-11-09 | 4.5 (suite) | Ancienne règle ufw `10.88.0.0/16 1025/tcp` supprimée | — |
+| 2026-11-09 | 5.1 | La boucle d'envoi semble bloquée : `$TO` était vide dans le terminal, et `swaks` attendait la saisie du destinataire (`To:`) | Commandes protégées par `${TO:?…}` : elles s'arrêtent tout de suite avec un message si `TO` est vide |
 
 ---
 

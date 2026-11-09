@@ -61,6 +61,22 @@ final readonly class View
         return $response;
     }
 
+    /** Script statique de templates/ (ex. dashboard.js). */
+    public function script(string $name): ResponseInterface
+    {
+        $file = $this->templateDir . '/' . $name;
+        if (!preg_match('/^[a-z-]+\.js$/', $name) || !is_file($file)) {
+            throw new RuntimeException(sprintf('script introuvable : %s', $name));
+        }
+
+        $response = $this->responseFactory->createResponse(200)
+            ->withHeader('Content-Type', 'text/javascript; charset=utf-8')
+            ->withHeader('Cache-Control', 'private, max-age=300');
+        $response->getBody()->write((string) file_get_contents($file));
+
+        return $response;
+    }
+
     /** Redirection après un formulaire (303 : le navigateur refait un GET). */
     public function redirect(string $path): ResponseInterface
     {

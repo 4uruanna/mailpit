@@ -91,6 +91,9 @@ Pages HTML pour les administrateurs, dans un navigateur. Voir [Dashboard](#dashb
 | `/v1/app/messages/{id}` | Un mail : expéditeur, destinataires, dates, corps HTML et texte, en-têtes, pièces jointes |
 | `/v1/app/messages/{id}/html` | Corps HTML du mail seul, isolé (affiché dans la page précédente) |
 | `/v1/app/messages/{id}/parts/{partId}` | Téléchargement d'une pièce jointe ou d'une image intégrée |
+| `/v1/app/messages/delete` (`POST`) | Supprime les mails cochés dans la liste |
+| `/v1/app/messages/{id}/delete` (`POST`) | Supprime un mail |
+| `/v1/app/dashboard.js` | Script des pages (confirmations, sélection), servi depuis `templates/` |
 | `/v1/app/tokens` | Liste des jetons, création, suppression |
 | `/v1/app/tokens/{id}` | Détail d'un jeton : associer et retirer des adresses |
 
@@ -190,7 +193,7 @@ Créez par exemple un dossier `api` à la racine FTP de l'hébergement (à côt�
 
 > 💡 Les fichiers qui commencent par un point sont souvent masqués dans les clients FTP. Dans FileZilla : menu **Serveur** → **Forcer l'affichage des fichiers cachés**.
 
-Envoyez aussi `templates/` (pages du Dashboard). Inutile d'envoyer `README.md`, `bin/`, `sql/` et `config.example.php` (ils sont de toute façon bloqués par le `.htaccess`).
+Envoyez aussi `templates/` (pages et script du Dashboard). Inutile d'envoyer `README.md`, `bin/`, `sql/` et `config.example.php` (ils sont de toute façon bloqués par le `.htaccess`).
 
 Les dossiers `var/log/` et `var/messages/` doivent être accessibles en écriture par PHP (droits `755` ou `705`, ce qui est le cas par défaut chez OVH). `var/messages/` contiendra toutes les pièces jointes : surveillez l'espace disque de l'hébergement.
 
@@ -356,7 +359,10 @@ SELECT subject, headers->>'$."X-Mailer"[0]' AS mailer FROM mailpit_messages ORDE
   - **Ordre** : du plus récent au plus ancien (par défaut) ou l'inverse. Un clic sur l'en-tête de colonne « Reçu le » inverse aussi l'ordre.
 
   Les filtres sont dans l'URL : la pagination et le retour depuis un mail les conservent, et une liste filtrée peut être mise en favori.
-- **Un mail** (clic sur sa date ou son sujet) : tous ses champs, le corps HTML et la version texte, les en-têtes, et les pièces jointes avec un lien **Télécharger** (nom de fichier d'origine). Une pièce trop volumineuse (`too_large`) ou pas encore reçue est listée, sans lien.
+  **Suppression** : cochez des mails (la case de l'en-tête coche toute la page), puis **Supprimer la sélection (N)**. Le navigateur demande confirmation. On revient ensuite sur la même liste, mêmes filtres.
+- **Un mail** (clic sur sa date ou son sujet) : tous ses champs, le corps HTML et la version texte, les en-têtes, et les pièces jointes avec un lien **Télécharger** (nom de fichier d'origine). Une pièce trop volumineuse (`too_large`) ou pas encore reçue est listée, sans lien. Le bouton **Supprimer ce mail** le supprime, après confirmation, et ramène à la liste.
+
+Une suppression efface le mail de la base (pièces jointes et destinataires compris) et ses fichiers dans `var/messages/`, comme `DELETE /v1/messages/{id}` côté jetons. Le mail reste dans **Mailpit**. Si le relais l'y renvoyait (mail pas encore complet au moment de la suppression), il réapparaîtrait.
 - **Tokens** : création (un nom suffit) et suppression des jetons développeurs. Un jeton supprimé est refusé (`401`) dès l'appel suivant.
 - **Détail d'un jeton** : associer ou retirer des adresses, et voir combien de mails chacune a reçus.
 
@@ -364,7 +370,7 @@ SELECT subject, headers->>'$."X-Mailer"[0]' AS mailer FROM mailpit_messages ORDE
 
 > ⚠️ **Le jeton n'est affiché qu'une fois**, juste après sa création. Seule son empreinte SHA-256 est gardée en base : s'il est perdu, supprimez-le et créez-en un autre.
 
-**Sécurité.** Connexion limitée à **3 échecs par identifiant sur 30 minutes** : au-delà, l'identifiant est bloqué (`429`) jusqu'à 30 minutes après le premier des trois échecs, même avec le bon mot de passe. Une connexion réussie remet le compteur à zéro. Un identifiant inexistant est traité de la même façon, pour ne pas révéler quels comptes existent. Les autres protections : mots de passe hachés (`password_hash`), cookie de session `HttpOnly`, `SameSite=Strict` et `Secure` en HTTPS, limité au chemin `/v1/app`, jeton anti-CSRF dans chaque formulaire, déconnexion après 2 h d'inactivité (`app.session_lifetime`), pages jamais mises en cache ni affichables dans une iframe.
+**Sécurité.** Les pages n'exécutent qu'un seul script, `dashboard.js`, servi par l'API (CSP `script-src 'self'`) : il affiche les confirmations et gère les cases à cocher. Connexion limitée à **3 échecs par identifiant sur 30 minutes** : au-delà, l'identifiant est bloqué (`429`) jusqu'à 30 minutes après le premier des trois échecs, même avec le bon mot de passe. Une connexion réussie remet le compteur à zéro. Un identifiant inexistant est traité de la même façon, pour ne pas révéler quels comptes existent. Les autres protections : mots de passe hachés (`password_hash`), cookie de session `HttpOnly`, `SameSite=Strict` et `Secure` en HTTPS, limité au chemin `/v1/app`, jeton anti-CSRF dans chaque formulaire, déconnexion après 2 h d'inactivité (`app.session_lifetime`), pages jamais mises en cache ni affichables dans une iframe.
 
 Le Dashboard est accessible depuis **n'importe quelle IP** : `webhook.allowed_ips` ne concerne que le relais.
 

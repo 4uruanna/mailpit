@@ -7,6 +7,7 @@
  * @var callable $url
  * @var callable $date
  * @var callable $bytes
+ * @var string $csrf
  */
 
 $addresses = static fn (array $list): string => implode(', ', array_map(
@@ -22,7 +23,15 @@ $hasText = is_string($message['text']) && $message['text'] !== '';
 $statusLabel = ['pending' => 'pas encore reçue', 'too_large' => 'trop volumineuse, non enregistrée'];
 ?>
 <p><a href="<?= $e($back) ?>">← Messages</a></p>
-<h1><?= $e($message['subject'] !== '' ? $message['subject'] : '(sans sujet)') ?></h1>
+<div class="title-row">
+    <h1><?= $e($message['subject'] !== '' ? $message['subject'] : '(sans sujet)') ?></h1>
+    <form method="post" action="<?= $e($url($base . '/delete')) ?>"
+          data-confirm="Supprimer définitivement ce mail et ses pièces jointes ? (Il reste dans Mailpit.)">
+        <input type="hidden" name="_csrf" value="<?= $e($csrf) ?>">
+        <input type="hidden" name="back" value="<?= $e($filter->query()) ?>">
+        <button type="submit" class="danger">Supprimer ce mail</button>
+    </form>
+</div>
 
 <div class="card">
     <dl class="meta">

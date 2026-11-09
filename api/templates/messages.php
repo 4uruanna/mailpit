@@ -82,7 +82,9 @@ $detailQuery = $filter->query();
 </p>
 
 <?php if ($messages !== []): ?>
-<form method="post" action="<?= $e($url('/v1/app/messages/delete')) ?>" data-selection
+<?php /* autocomplete="off" : au retour sur la page, le navigateur ne recoche pas les cases d'avant,
+         qui pourraient désigner d'autres mails si la liste a changé (voir dashboard.js). */ ?>
+<form method="post" action="<?= $e($url('/v1/app/messages/delete')) ?>" data-selection autocomplete="off"
       data-confirm="Supprimer définitivement {n} mail(s) et leurs pièces jointes ? (Ils restent dans Mailpit.)">
 <input type="hidden" name="_csrf" value="<?= $e($csrf) ?>">
 <input type="hidden" name="back" value="<?= $e($filter->query()) ?>">

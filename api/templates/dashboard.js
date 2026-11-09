@@ -12,6 +12,7 @@
  *  - <form data-selection> : formulaire à cases à cocher « ids[] ». La case [data-select-all]
  *    coche ou décoche toutes les autres ; [data-selection-count] affiche le nombre de cases
  *    cochées ; les boutons [data-needs-selection] sont désactivés tant que rien n'est coché.
+ *    Avec autocomplete="off", le navigateur ne recoche pas les cases au retour sur la page.
  */
 'use strict';
 
@@ -156,4 +157,9 @@
     } else {
         init();
     }
+
+    // Retour sur la page (bouton Précédent, rechargement) : le navigateur peut remettre l'état des
+    // cases après init(), sans événement « change ». Sans cette mise à jour, la case de l'en-tête,
+    // le compteur et le bouton Supprimer ne correspondraient plus aux cases cochées.
+    window.addEventListener('pageshow', init);
 })();

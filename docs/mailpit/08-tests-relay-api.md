@@ -541,6 +541,7 @@ Notez ici chaque écart constaté et sa correction, au fil des essais.
 | 2026-11-09 | 4.1 (suite) | Envoi à 12:09:23, enregistré par l'API à 12:09:23 (webhook immédiat, aucune erreur de webhook dans Mailpit). API : `complete: true` | — |
 | 2026-11-09 | 4.2 | `complete: true`. Image intégrée (`inline`, `point.png`) et pièce jointe (`attachment`, `note.txt`) toutes deux `stored` | — |
 | 2026-11-09 | 4.3 | Mail de 8,2 Mo (pièce de 6 Mo) : livré, `complete: true`, pièce `too_large` (6000000 octets), avertissement dans les logs du relais | — |
+| 2026-11-09 | 4.4 | Rafale de 10 mails : 10 acceptés, 10 enregistrés par l'API, `total` +10, `status.php` : 0 en attente, 0 refusé | — |
 
 ---
 

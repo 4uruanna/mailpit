@@ -12,7 +12,7 @@ use PHPUnit\Framework\TestCase;
 
 final class MessageTest extends TestCase
 {
-    /** Résumé envoyé par le webhook direct de Mailpit. */
+    /** Résumé de Mailpit (ce qu'envoyait son webhook direct, qui n'est plus accepté). */
     public static function summary(): array
     {
         return [

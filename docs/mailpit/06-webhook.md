@@ -12,7 +12,9 @@ Mail reçu ──► Mailpit ── POST JSON (résumé du mail) ──► votre
 
 La requête contient un **résumé** du mail (expéditeur, destinataires, sujet, extrait…), pas son contenu complet. Si votre service a besoin du corps ou des pièces jointes, il les récupère ensuite via l'API de Mailpit avec l'`ID` reçu.
 
-> 💡 Pour enregistrer chaque mail reçu dans une base MySQL sur un hébergement OVH, une API prête à déployer est fournie dans le dossier [`api/`](../../api/README.md). Pour lui envoyer le **mail complet** (pièces jointes comprises) sans en perdre aucun, utilisez le relais de la [Partie 7](07-relay.md).
+> 💡 Pour enregistrer chaque mail reçu dans une base MySQL sur un hébergement OVH, une API prête à déployer est fournie dans le dossier [`api/`](../../api/README.md). Elle s'alimente **uniquement** par le relais de la [Partie 7](07-relay.md), qui lui envoie le **mail complet** (pièces jointes comprises) sans en perdre aucun.
+>
+> ⚠️ Ne branchez **pas** le webhook de Mailpit directement sur cette API : elle n'accepte son jeton que dans l'en-tête `Authorization`, que Mailpit ne sait pas ajouter. Un `?token=…` dans l'URL est refusé (`401`).
 
 ## Étape 1 — Choisir l'URL du webhook
 
@@ -31,7 +33,7 @@ L'URL dépend de l'endroit où tourne ce service :
 
 > ⚠️ **N'utilisez pas `127.0.0.1` ou `localhost`** pour un service installé sur le serveur. Mailpit tourne dans un conteneur : pour lui, `127.0.0.1` désigne le conteneur lui-même, pas le serveur. `host.containers.internal` est un nom que Podman fournit pour joindre le serveur depuis le conteneur. Le service doit alors écouter sur `0.0.0.0` (ou l'IP du serveur), pas seulement sur `127.0.0.1`.
 
-> 💡 Mailpit n'ajoute **ni signature ni jeton** à ses requêtes. Si votre service est joignable depuis Internet, mettez un secret long et aléatoire dans l'URL (par exemple `https://mon-service.exemple.fr/hook?token=UnSecretTresLong`) et rejetez les requêtes qui ne l'ont pas. Générez-en un avec `openssl rand -hex 24`.
+> 💡 Mailpit n'ajoute **ni signature ni jeton** à ses requêtes, et ne sait pas ajouter d'en-tête `Authorization`. Si votre service est joignable depuis Internet, mettez un secret long et aléatoire dans l'URL (par exemple `https://mon-service.exemple.fr/hook?token=UnSecretTresLong`) et rejetez les requêtes qui ne l'ont pas. Générez-en un avec `openssl rand -hex 24`. Ce secret apparaîtra dans les logs d'accès de votre service : réservez-le à un service dont vous gardez les logs pour vous. (L'API du dossier `api/` refuse ce procédé : voir plus haut.)
 
 ## Étape 2 — Activer le webhook dans Mailpit
 
@@ -162,7 +164,7 @@ Un appel **réussi** n'écrit rien dans les logs. Seuls les échecs apparaissent
 | Log `connection refused` | Le service n'écoute pas, ou seulement sur `127.0.0.1`. Faites-le écouter sur `0.0.0.0` et utilisez `host.containers.internal` (étape 1) |
 | Log `i/o timeout` ou `Client.Timeout exceeded` | Service trop lent (> 5 s), ou pare-feu. Avec ufw et un service sur le même serveur, le conteneur (réseau `10.88.0.0/16`) doit pouvoir joindre le serveur : `sudo ufw allow from 10.88.0.0/16 to any port 9000 proto tcp` (adaptez le port) |
 | Log `no such host` | Faute dans le nom d'hôte. Pour `host.containers.internal`, vérifiez qu'il existe dans le conteneur : `sudo podman exec mailpit grep host.containers.internal /etc/hosts` |
-| Log avec un code `401`, `403`, `404`… | Le service a répondu par une erreur : mauvais chemin, ou jeton manquant ou incorrect dans l'URL |
+| Log avec un code `401`, `403`, `404`… | Le service a répondu par une erreur : mauvais chemin, ou jeton manquant ou incorrect dans l'URL. Un `401` de l'API du dossier `api/` est normal : elle n'accepte que le relais ([Partie 7](07-relay.md)) |
 | Certains mails ne déclenchent pas d'appel | `MP_WEBHOOK_LIMIT` absent ou supérieur à 0 : mettez `MP_WEBHOOK_LIMIT=0` (étape 2) |
 
 ### Debian 12

@@ -42,6 +42,9 @@ return [
         // Jeton secret OBLIGATOIRE (32 caractères minimum), identique à RELAY_API_TOKEN
         // dans /etc/mailpit/relay.env. Le relais l'envoie dans l'en-tête
         // « Authorization: Bearer … ». Il s'ajoute au filtre IP.
+        // ⚠️ Il n'est accepté que dans cet en-tête : un « ?token=… » dans l'URL est refusé
+        // (il apparaîtrait dans les logs d'accès). Mailpit ne peut donc pas appeler l'API
+        // directement : passez par le relais.
         // Générez-le avec : openssl rand -hex 32
         'token' => 'REMPLACEZ_PAR_LE_RESULTAT_DE_openssl_rand_-hex_32',
 

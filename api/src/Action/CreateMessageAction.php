@@ -16,7 +16,7 @@ use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 
 /**
- * POST /v1/messages : reçoit un mail (mail complet envoyé par le relais, ou résumé du webhook direct de Mailpit).
+ * POST /v1/messages : reçoit un mail complet, envoyé par le relais (seul autorisé, voir TokenAuthMiddleware).
  *
  * Réponses :
  *   201 {"status":"created", "id":"…", "complete":false, "missing":["2","1.3"], "too_large":["4"]}

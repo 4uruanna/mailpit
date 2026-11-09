@@ -106,7 +106,7 @@ $statusLabel = ['pending' => 'pas encore reçue', 'too_large' => 'trop volumineu
     <div class="card empty">
         <?= $e($message['snippet'] !== '' ? $message['snippet'] : 'Aucun contenu.') ?>
         <?php if ($message['text'] === null && $message['html'] === null): ?>
-            <br><span class="muted">Corps non disponible : ce mail est arrivé par le webhook direct de Mailpit (résumé seulement).</span>
+            <br><span class="muted">Corps non disponible : ce mail est arrivé par l'ancien webhook direct de Mailpit (résumé seulement).</span>
         <?php endif; ?>
     </div>
 <?php endif; ?>
@@ -150,7 +150,7 @@ $statusLabel = ['pending' => 'pas encore reçue', 'too_large' => 'trop volumineu
 <?php if ($message['headers'] === []): ?>
     <div class="card empty">
         Aucun en-tête enregistré.
-        <br><span class="muted">Les en-têtes ne sont transmis que par le relais, pas par le webhook direct de Mailpit.</span>
+        <br><span class="muted">Les en-têtes ne sont transmis que par le relais, pas par l'ancien webhook direct de Mailpit.</span>
     </div>
 <?php else: ?>
 <div class="table-wrap">

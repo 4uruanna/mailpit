@@ -61,7 +61,7 @@ final class MessageRepositoryTest extends DatabaseTestCase
 
     public function testSummaryThenFullMessageIsUpdated(): void
     {
-        // Le webhook direct de Mailpit n'envoie qu'un résumé : le relais complète ensuite.
+        // Résumé seul (ancien webhook direct de Mailpit) : le relais complète ensuite.
         $summary = array_diff_key(self::payload('m1'), ['Text' => 0, 'HTML' => 0, 'Headers' => 0]);
         self::assertSame('created', $this->save($summary)['status']);
         self::assertNull($this->scalar("SELECT text_body FROM mailpit_messages WHERE mailpit_id = 'm1'"));

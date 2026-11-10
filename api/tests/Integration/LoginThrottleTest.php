@@ -8,6 +8,7 @@ use App\Auth\LoginThrottle;
 use App\Persistence\AdminRepository;
 use App\Persistence\LoginAttemptRepository;
 use App\Tests\Support\DatabaseTestCase;
+use App\Tests\Support\TempDir;
 
 final class LoginThrottleTest extends DatabaseTestCase
 {
@@ -42,9 +43,9 @@ final class LoginThrottleTest extends DatabaseTestCase
 
     public function testThreeFailuresThenBlockedForThisAddress(): void
     {
-        self::assertSame(['status' => 'invalid', 'remaining' => 2, 'limit' => 'username'], $this->throttle->attempt('admin', 'faux', '203.0.113.10'));
-        self::assertSame(['status' => 'invalid', 'remaining' => 1, 'limit' => 'username'], $this->throttle->attempt('admin', 'faux', '203.0.113.10'));
-        self::assertSame(['status' => 'invalid', 'remaining' => 0, 'limit' => 'username'], $this->throttle->attempt('admin', 'faux', '203.0.113.10'));
+        self::assertSame(['status' => 'invalid', 'remaining' => 2, 'limit' => 'username', 'no_admin' => false], $this->throttle->attempt('admin', 'faux', '203.0.113.10'));
+        self::assertSame(['status' => 'invalid', 'remaining' => 1, 'limit' => 'username', 'no_admin' => false], $this->throttle->attempt('admin', 'faux', '203.0.113.10'));
+        self::assertSame(['status' => 'invalid', 'remaining' => 0, 'limit' => 'username', 'no_admin' => false], $this->throttle->attempt('admin', 'faux', '203.0.113.10'));
 
         // Même le bon mot de passe est refusé pendant le blocage.
         $blocked = $this->throttle->attempt('admin', self::PASSWORD, '203.0.113.10');
@@ -65,7 +66,7 @@ final class LoginThrottleTest extends DatabaseTestCase
         self::assertSame('blocked', $this->throttle->attempt('admin', self::PASSWORD, '203.0.113.10')['status']);
 
         // Les échecs d'une autre adresse ne bloquent pas l'administrateur.
-        self::assertSame(['status' => 'invalid', 'remaining' => 2, 'limit' => 'username'], $this->throttle->attempt('Admin', 'faux', '198.51.100.1'));
+        self::assertSame(['status' => 'invalid', 'remaining' => 2, 'limit' => 'username', 'no_admin' => false], $this->throttle->attempt('Admin', 'faux', '198.51.100.1'));
         self::assertSame('ok', $this->throttle->attempt('admin', self::PASSWORD, '198.51.100.1')['status']);
 
         // Une IPv4 compte à l'adresse exacte : sa voisine n'est pas bloquée non plus.
@@ -81,8 +82,8 @@ final class LoginThrottleTest extends DatabaseTestCase
             $result = $this->throttle->attempt('inconnu' . $i, 'faux', '203.0.113.10');
             // Un seul échec par identifiant : c'est le plafond de l'adresse qui se rapproche.
             $expected = LoginThrottle::MAX_ATTEMPTS_PER_IP - $i < LoginThrottle::MAX_ATTEMPTS - 1
-                ? ['status' => 'invalid', 'remaining' => LoginThrottle::MAX_ATTEMPTS_PER_IP - $i, 'limit' => 'ip']
-                : ['status' => 'invalid', 'remaining' => LoginThrottle::MAX_ATTEMPTS - 1, 'limit' => 'username'];
+                ? ['status' => 'invalid', 'remaining' => LoginThrottle::MAX_ATTEMPTS_PER_IP - $i, 'limit' => 'ip', 'no_admin' => false]
+                : ['status' => 'invalid', 'remaining' => LoginThrottle::MAX_ATTEMPTS - 1, 'limit' => 'username', 'no_admin' => false];
             self::assertSame($expected, $result, 'tentative ' . $i);
         }
 
@@ -134,7 +135,7 @@ final class LoginThrottleTest extends DatabaseTestCase
         // Trois adresses différentes du même /64 : un seul compteur.
         $this->throttle->attempt('admin', 'faux', '2001:db8:1:2::1');
         $this->throttle->attempt('admin', 'faux', '2001:DB8:1:2::abcd');
-        self::assertSame(['status' => 'invalid', 'remaining' => 0, 'limit' => 'username'], $this->throttle->attempt('admin', 'faux', '2001:db8:1:2:ffff:ffff:ffff:ffff'));
+        self::assertSame(['status' => 'invalid', 'remaining' => 0, 'limit' => 'username', 'no_admin' => false], $this->throttle->attempt('admin', 'faux', '2001:db8:1:2:ffff:ffff:ffff:ffff'));
 
         self::assertSame('blocked', $this->throttle->attempt('admin', self::PASSWORD, '2001:db8:1:2:1234::9')['status']);
         // Le /64 voisin n'est pas bloqué.
@@ -155,7 +156,7 @@ final class LoginThrottleTest extends DatabaseTestCase
         self::assertSame('ok', $this->throttle->attempt('admin', self::PASSWORD, '203.0.113.10')['status']);
 
         // Compteur de admin depuis 203.0.113.10 remis à zéro ; les autres échecs restent.
-        self::assertSame(['status' => 'invalid', 'remaining' => 2, 'limit' => 'username'], $this->throttle->attempt('admin', 'faux', '203.0.113.10'));
+        self::assertSame(['status' => 'invalid', 'remaining' => 2, 'limit' => 'username', 'no_admin' => false], $this->throttle->attempt('admin', 'faux', '203.0.113.10'));
         self::assertSame(1, (int) $this->scalar("SELECT COUNT(*) FROM mailpit_login_attempts WHERE username = 'admin' AND ip_key = '198.51.100.1'"));
         self::assertSame(1, (int) $this->scalar("SELECT COUNT(*) FROM mailpit_login_attempts WHERE username = 'autre'"));
     }
@@ -184,13 +185,60 @@ final class LoginThrottleTest extends DatabaseTestCase
 
     public function testUnknownUserIsThrottledToo(): void
     {
-        self::assertSame(['status' => 'invalid', 'remaining' => 2, 'limit' => 'username'], $this->throttle->attempt('inconnu', self::PASSWORD, '203.0.113.10'));
+        self::assertSame(['status' => 'invalid', 'remaining' => 2, 'limit' => 'username', 'no_admin' => false], $this->throttle->attempt('inconnu', self::PASSWORD, '203.0.113.10'));
         $this->throttle->attempt('inconnu', 'x', '203.0.113.10');
         $this->throttle->attempt('inconnu', 'x', '203.0.113.10');
 
         self::assertSame('blocked', $this->throttle->attempt('inconnu', 'x', '203.0.113.10')['status']);
         // Le blocage d'un identifiant ne touche pas les autres.
         self::assertSame('ok', $this->throttle->attempt('admin', self::PASSWORD, '203.0.113.10')['status']);
+    }
+
+    public function testNoAdminAtAllIsReported(): void
+    {
+        $this->pdo->exec('DELETE FROM mailpit_admins');
+        $offset = self::logSize();
+
+        // Table vide : aucun identifiant ne peut fonctionner, l'échec le dit (et reste compté).
+        self::assertSame(['status' => 'invalid', 'remaining' => 2, 'limit' => 'username', 'no_admin' => true], $this->throttle->attempt('admin', self::PASSWORD, '203.0.113.10'));
+        self::assertSame(1, $this->attempts());
+        self::assertStringContainsString(
+            '[signin] échec pour « admin » depuis 203.0.113.10 (1/3 pour cet identifiant, 1/10 pour l\'adresse) : aucun administrateur dans mailpit_admins, créez-en un (php bin/create-admin.php)',
+            self::logSince($offset),
+        );
+    }
+
+    public function testFailureReasonIsLoggedButNotReturned(): void
+    {
+        $offset = self::logSize();
+        // Un compte existe : un identifiant inconnu ne se distingue pas d'un mauvais mot de passe.
+        self::assertSame(['status' => 'invalid', 'remaining' => 2, 'limit' => 'username', 'no_admin' => false], $this->throttle->attempt('inconnu', self::PASSWORD, '203.0.113.10'));
+        self::assertSame(['status' => 'invalid', 'remaining' => 2, 'limit' => 'username', 'no_admin' => false], $this->throttle->attempt('admin', 'faux', '198.51.100.1'));
+
+        // Mot de passe saisi en clair dans phpMyAdmin au lieu du haché de bin/create-admin.php.
+        $this->pdo->prepare('UPDATE mailpit_admins SET password = ? WHERE id = ?')->execute([self::PASSWORD, $this->adminId]);
+        self::assertSame('invalid', $this->throttle->attempt('admin', self::PASSWORD, '192.0.2.1')['status']);
+
+        $log = self::logSince($offset);
+        self::assertStringContainsString('« inconnu » depuis 203.0.113.10 (1/3 pour cet identifiant, 1/10 pour l\'adresse) : identifiant inconnu', $log);
+        self::assertStringContainsString('« admin » depuis 198.51.100.1 (1/3 pour cet identifiant, 1/10 pour l\'adresse) : mot de passe incorrect' . "\n", $log);
+        self::assertStringContainsString('« admin » depuis 192.0.2.1 (1/3 pour cet identifiant, 1/10 pour l\'adresse) : mot de passe incorrect, et celui enregistré n\'est pas un haché password_hash()', $log);
+    }
+
+    private static function logSize(): int
+    {
+        clearstatcache();
+        $log = TempDir::logFile();
+
+        return is_file($log) ? (int) filesize($log) : 0;
+    }
+
+    /** Lignes écrites dans le log (error_log) depuis $offset. */
+    private static function logSince(int $offset): string
+    {
+        clearstatcache();
+
+        return (string) file_get_contents(TempDir::logFile(), offset: $offset);
     }
 
     public function testOutdatedHashIsUpgraded(): void

@@ -14,11 +14,18 @@ use Psr\Http\Message\ServerRequestInterface;
 /**
  * GET  /v1/app/signin   formulaire de connexion
  * POST /v1/app/signin   connexion (sur 30 minutes, 3 échecs au plus par identifiant depuis une même
- *                        adresse, et 10 par adresse tous identifiants confondus : voir LoginThrottle)
+ *                        adresse, et 10 par adresse tous identifiants confondus : voir LoginThrottle).
+ *                        Si aucun administrateur n'existe encore, l'échec le dit.
  * POST /v1/app/signout  déconnexion
  */
 final readonly class SignInController
 {
+    /**
+     * Ajouté au message d'échec quand mailpit_admins est vide : personne ne peut se connecter, quels que
+     * soient l'identifiant et le mot de passe. Les identifiants de Mailpit (MP_UI_AUTH) ne valent pas ici.
+     */
+    private const string NO_ADMIN = 'Aucun administrateur n\'existe encore : créez le premier compte avec « php bin/create-admin.php » (README de l\'API, étape 2 bis). Les identifiants de l\'interface de Mailpit ne fonctionnent pas ici.';
+
     public function __construct(
         private LoginThrottle $throttle,
         private Session $session,
@@ -61,7 +68,11 @@ final readonly class SignInController
                 ),
                 429,
             )->withHeader('Retry-After', (string) $result['retry_after']),
-            default   => $this->failure($username, self::invalidMessage($result['remaining'], $result['limit']), 401),
+            default   => $this->failure(
+                $username,
+                self::invalidMessage($result['remaining'], $result['limit']) . ($result['no_admin'] ? ' ' . self::NO_ADMIN : ''),
+                401,
+            ),
         };
     }
 

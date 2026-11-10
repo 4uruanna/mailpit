@@ -24,7 +24,10 @@ use DateTimeImmutable;
  * depuis cette adresse.
  *
  * Le blocage vaut aussi pour un identifiant qui n'existe pas : la réponse ne permet pas de
- * savoir si un compte existe.
+ * savoir si un compte existe. Seule exception, « no_admin » : la table mailpit_admins est vide,
+ * il n'y a donc aucun compte à protéger, et la page de connexion peut dire d'en créer un.
+ * La cause exacte d'un échec (identifiant inconnu, mot de passe incorrect, mot de passe
+ * enregistré qui n'est pas un haché password_hash()) n'est écrite que dans le log.
  */
 final readonly class LoginThrottle
 {
@@ -46,9 +49,10 @@ final readonly class LoginThrottle
     /**
      * « limit » dit quelle limite est atteinte (blocked) ou la plus proche (invalid) :
      * « username » pour cet identifiant depuis cette adresse, « ip » pour l'adresse.
+     * « no_admin » (invalid) : aucun administrateur n'existe encore (table mailpit_admins vide).
      *
      * @return array{status: 'ok', admin: array{id: int, username: string}}
-     *       | array{status: 'invalid', remaining: int, limit: 'username'|'ip'}
+     *       | array{status: 'invalid', remaining: int, limit: 'username'|'ip', no_admin: bool}
      *       | array{status: 'blocked', retry_after: int, limit: 'username'|'ip'}
      */
     public function attempt(string $username, string $password, string $ip): array
@@ -84,19 +88,32 @@ final readonly class LoginThrottle
         if (!$valid) {
             $pairRemaining = self::MAX_ATTEMPTS - $recent['pair']['count'];
             $ipRemaining = self::MAX_ATTEMPTS_PER_IP - $recent['ip']['count'];
+            // Requête faite à chaque échec, compte trouvé ou non : même temps de réponse dans les deux cas.
+            $noAdmin = !$this->admins->hasAny();
+            if ($noAdmin) {
+                $reason = 'aucun administrateur dans mailpit_admins, créez-en un (php bin/create-admin.php)';
+            } elseif ($admin === null) {
+                $reason = 'identifiant inconnu';
+            } elseif (password_get_info($admin['password'])['algo'] === null) {
+                // Mot de passe saisi en clair dans phpMyAdmin, haché tronqué ou coupé par un retour à la ligne…
+                $reason = 'mot de passe incorrect, et celui enregistré n\'est pas un haché password_hash() : recréez-le (php bin/create-admin.php)';
+            } else {
+                $reason = 'mot de passe incorrect';
+            }
             error_log(sprintf(
-                '[signin] échec pour « %s » depuis %s (%d/%d pour cet identifiant, %d/%d pour l\'adresse)',
+                '[signin] échec pour « %s » depuis %s (%d/%d pour cet identifiant, %d/%d pour l\'adresse) : %s',
                 $key,
                 $from,
                 $recent['pair']['count'],
                 self::MAX_ATTEMPTS,
                 $recent['ip']['count'],
                 self::MAX_ATTEMPTS_PER_IP,
+                $reason,
             ));
 
             return $ipRemaining < $pairRemaining
-                ? ['status' => 'invalid', 'remaining' => $ipRemaining, 'limit' => 'ip']
-                : ['status' => 'invalid', 'remaining' => $pairRemaining, 'limit' => 'username'];
+                ? ['status' => 'invalid', 'remaining' => $ipRemaining, 'limit' => 'ip', 'no_admin' => $noAdmin]
+                : ['status' => 'invalid', 'remaining' => $pairRemaining, 'limit' => 'username', 'no_admin' => $noAdmin];
         }
 
         $this->attempts->clear($key, $ipKey);

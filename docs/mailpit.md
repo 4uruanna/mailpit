@@ -41,7 +41,7 @@ Suivez les parties **dans l'ordre** : la Partie 4 a besoin de l'enregistrement D
 | `test.mondomaine.fr` | le sous-domaine qui recevra les mails de test |
 | `mail.mondomaine.fr` | le nom de votre serveur (pour le MX) |
 | `IP_DU_SERVEUR` | l'adresse IPv4 publique du serveur |
-| `admin:MotDePasseSolide` | vos identifiants pour l'interface web |
+| `admin:MotDePasseSolide` | vos identifiants pour l'interface web **de Mailpit** (`MP_UI_AUTH`). Le Dashboard de l'API a ses propres comptes, créés avec `php bin/create-admin.php` ([Partie 8, étape 1.6](mailpit/08-tests-relay-api.md#étape-16---ordinateur--créer-un-administrateur-du-dashboard)) |
 | `vous@exemple.fr` | votre vraie adresse (compte Let's Encrypt : avis importants sur le service) |
 
 > 💡 Le sous-domaine qui reçoit les mails et le nom du serveur **peuvent être le même**. Exemple : recevoir sur `*@mail.mondomaine.fr`, avec un MX `mail` qui pointe vers `mail.mondomaine.fr.` lui-même. Remplacez alors `test.mondomaine.fr` **et** `mail.mondomaine.fr` par ce seul nom dans tout le tuto.

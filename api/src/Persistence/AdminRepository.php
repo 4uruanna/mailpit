@@ -33,6 +33,12 @@ final readonly class AdminRepository
         return $row === false ? null : self::row($row);
     }
 
+    /** La table contient-elle au moins un administrateur ? (non : aucun compte n'a encore été créé) */
+    public function hasAny(): bool
+    {
+        return $this->database->pdo()->query('SELECT 1 FROM mailpit_admins LIMIT 1')->fetchColumn() !== false;
+    }
+
     public function updatePassword(int $id, string $hash): void
     {
         $this->database->pdo()->prepare('UPDATE mailpit_admins SET password = ? WHERE id = ?')->execute([$hash, $id]);

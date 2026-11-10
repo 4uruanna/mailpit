@@ -105,6 +105,21 @@ final class DashboardTest extends AppTestCase
 
         self::assertSame(401, $response->getStatusCode());
         self::assertStringContainsString('Encore 2 essai(s)', (string) $response->getBody());
+        self::assertStringNotContainsString('Aucun administrateur', (string) $response->getBody());
+        self::assertSame(1, (int) $this->scalar('SELECT COUNT(*) FROM mailpit_login_attempts'));
+    }
+
+    public function testSignInWithoutAnyAdminSaysSo(): void
+    {
+        // Aucun compte créé (bin/create-admin.php jamais lancé) : par ex. les identifiants de Mailpit.
+        $csrf = self::csrf($this->request('GET', '/v1/app/signin', ip: self::OTHER_IP));
+
+        $response = $this->request('POST', '/v1/app/signin', ip: self::OTHER_IP, form: ['_csrf' => $csrf, 'username' => 'admin', 'password' => 'MotDePasseSolide']);
+
+        self::assertSame(401, $response->getStatusCode());
+        $body = (string) $response->getBody();
+        self::assertStringContainsString('Identifiant ou mot de passe incorrect. Encore 2 essai(s) avant blocage de 30 minutes.', $body);
+        self::assertStringContainsString('Aucun administrateur n&#039;existe encore : créez le premier compte avec « php bin/create-admin.php »', $body);
         self::assertSame(1, (int) $this->scalar('SELECT COUNT(*) FROM mailpit_login_attempts'));
     }
 

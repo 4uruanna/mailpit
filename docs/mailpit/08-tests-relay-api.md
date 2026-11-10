@@ -174,6 +174,26 @@ strict-transport-security: max-age=31536000
 | `301` en boucle dans un navigateur (« Trop de redirections ») | Un proxy ou un CDN est placé devant l'hébergement : voir [Derrière un proxy ou un CDN](../../api/README.md#derrière-un-proxy-ou-un-cdn) |
 | Pas de ligne `strict-transport-security` | `.htaccess` ou API pas à jour |
 
+### Étape 1.6 — 💻 Ordinateur : créer un administrateur du Dashboard
+
+Le Dashboard (`https://api.mondomaine.fr/v1/app/signin`) a **ses propres comptes**, dans la table `mailpit_admins`, vide après l'import de `schema.sql`. Les identifiants de l'interface de Mailpit (`admin:MotDePasseSolide`, c'est-à-dire `MP_UI_AUTH`) n'y fonctionnent **pas**. Tant qu'aucun compte n'est créé, personne ne peut se connecter.
+
+1. 💻 Dans le dossier `api/` (PHP 8.4 ou plus) :
+   ```bash
+   php bin/create-admin.php
+   ```
+   Choisissez un identifiant et un mot de passe (12 caractères minimum). Le script affiche une requête `INSERT INTO mailpit_admins …`, avec le mot de passe **haché**.
+2. ☁️ **phpMyAdmin** → la base de `config.php` → onglet **SQL** : collez la requête, puis **Exécuter**.
+3. 💻 Dans un navigateur, connectez-vous sur `https://api.mondomaine.fr/v1/app/signin` avec cet identifiant et ce mot de passe.
+
+✅ Attendu : « 1 ligne insérée » dans phpMyAdmin, puis la page **Messages** du Dashboard.
+
+| Résultat | Signification |
+|---|---|
+| « … Aucun administrateur n'existe encore … » | La requête n'a pas été exécutée, ou l'a été dans une autre base que celle de `config.php` (`db.name`) |
+| « Identifiant ou mot de passe incorrect » seul | Le compte existe. La cause est dans `var/log/api.log` (FTP), à la fin de la ligne `[signin] échec pour « … »` : `identifiant inconnu`, `mot de passe incorrect`, ou mot de passe enregistré qui n'est pas un haché (saisi en clair, coupé au copier-coller…). Relancez `php bin/create-admin.php` avec le même identifiant : sa requête remplace le mot de passe |
+| « Trop de tentatives… » | 3 échecs en 30 minutes pour cet identifiant depuis votre adresse. Pour réessayer tout de suite : `DELETE FROM mailpit_login_attempts WHERE username = 'identifiant';` dans phpMyAdmin |
+
 ---
 
 ## Phase 2 — L'API répond au serveur Mailpit
@@ -372,7 +392,7 @@ sudo ss -ltnp | grep -E ':8080 ' || echo "port 8080 non publié : OK"
 
 ### Étape 3.6 — 💻 Ordinateur : la page Statut montre « Connecté »
 
-Le relais envoie un **ping de santé** à l'API toutes les 30 secondes. Ouvrez le Dashboard de l'API dans un navigateur, connectez-vous, puis cliquez sur **Statut** dans le menu (`https://api.mondomaine.fr/v1/app/status`).
+Le relais envoie un **ping de santé** à l'API toutes les 30 secondes. Ouvrez le Dashboard de l'API dans un navigateur, connectez-vous avec le compte créé à l'[étape 1.6](#étape-16---ordinateur--créer-un-administrateur-du-dashboard) (pas celui de Mailpit), puis cliquez sur **Statut** dans le menu (`https://api.mondomaine.fr/v1/app/status`).
 
 ✅ Attendu :
 
